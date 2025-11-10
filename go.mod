@@ -1,4 +1,4 @@
-module remex
+module github.com/leijux/remex
 
 go 1.25
 
