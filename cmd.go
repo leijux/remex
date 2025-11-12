@@ -166,7 +166,7 @@ func uploadFile(client *ssh.Client, args ...string) (string, error) {
 
 	// Create remote directory if it doesn't exist
 	remoteDir := filepath.Dir(remoteFilePath)
-	if err := sftpClient.MkdirAll(remoteDir); err != nil {
+	if err := sftpClient.MkdirAll(filepath.ToSlash(remoteDir)); err != nil {
 		return "", fmt.Errorf("failed to create remote directory: %w", err)
 	}
 
