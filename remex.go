@@ -210,11 +210,11 @@ func (r *Remex) execCommands(client *SSHClient, commands []string) error {
 		select {
 		case <-r.ctx.Done():
 			logger.Info("execution cancelled")
-			return nil
+			return r.ctx.Err()
 		default:
 			r.notifyHandlers(ExecResult{Index: i, RemoteAddr: remoteAddr})
 
-			output, err := client.ExecuteCommand(command)
+			output, err := client.ExecuteCommand(r.ctx, command)
 
 			r.notifyHandlers(ExecResult{Index: i + 1, RemoteAddr: remoteAddr, Output: output, Error: err})
 
@@ -266,23 +266,27 @@ func (r *Remex) GetConnectedHosts() []string {
 }
 
 // ExecuteRemoteCommand executes a command on the remote server and returns the output
-func ExecRemoteCommand(client *ssh.Client, command string) (string, error) {
+func ExecRemoteCommand(ctx context.Context, client *ssh.Client, command string) (string, error) {
 	session, err := client.NewSession()
 	if err != nil {
 		return "", fmt.Errorf("failed to create session: %w", err)
 	}
 	defer session.Close()
 
-	output, err := session.CombinedOutput(command)
-	if err != nil {
-		return string(output), fmt.Errorf("command execution failed: %w", err)
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	default:
+		output, err := session.CombinedOutput(command)
+		if err != nil {
+			return string(output), fmt.Errorf("command execution failed: %w", err)
+		}
+		return string(output), nil
 	}
-
-	return string(output), nil
 }
 
 // ExecuteRemexCommand executes a command on the remote server and returns the output
-func ExecRemexCommand(client *ssh.Client, command string) (string, error) {
+func ExecRemexCommand(ctx context.Context, client *ssh.Client, command string) (string, error) {
 	if client == nil {
 		return "", fmt.Errorf("ssh client is nil")
 	}
@@ -293,7 +297,7 @@ func ExecRemexCommand(client *ssh.Client, command string) (string, error) {
 	}
 
 	if iFunc, exists := GetCommand(commandSplit[0]); exists {
-		output, err := iFunc(client, commandSplit[1:]...)
+		output, err := iFunc(ctx, client, commandSplit[1:]...)
 		if err != nil {
 			return "", fmt.Errorf("internal command '%s' failed: %w", commandSplit[0], err)
 		}

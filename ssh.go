@@ -1,6 +1,7 @@
 package remex
 
 import (
+	"context"
 	"fmt"
 	"net/netip"
 	"strings"
@@ -57,16 +58,16 @@ func NewSSHClient(config SSHConfig) (*SSHClient, error) {
 }
 
 // ExecuteCommand executes a command on the remote server and returns the output
-func (sc *SSHClient) ExecuteCommand(command string) (string, error) {
+func (sc *SSHClient) ExecuteCommand(ctx context.Context, command string) (string, error) {
 	var (
 		output string
 		err    error
 	)
 
 	if strings.HasPrefix(command, "remex.") {
-		output, err = ExecRemexCommand(sc.Client, command)
+		output, err = ExecRemexCommand(ctx, sc.Client, command)
 	} else {
-		output, err = ExecRemoteCommand(sc.Client, command)
+		output, err = ExecRemoteCommand(ctx, sc.Client, command)
 	}
 
 	if err != nil {

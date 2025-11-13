@@ -1,6 +1,7 @@
 package remex
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -14,7 +15,7 @@ import (
 )
 
 // remexCommand represents an internal command function
-type remexCommand func(*ssh.Client, ...string) (string, error)
+type remexCommand func(context.Context, *ssh.Client, ...string) (string, error)
 
 // internalRegistry manages internal commands
 type internalRegistry struct {
@@ -69,7 +70,7 @@ type FileTransferResult struct {
 }
 
 // downloadFile downloads a file from remote host to local machine
-func downloadFile(client *ssh.Client, args ...string) (string, error) {
+func downloadFile(ctx context.Context, client *ssh.Client, args ...string) (string, error) {
 	if len(args) != 2 {
 		return "", errors.New("download requires exactly 2 arguments: remoteFilePath localFilePath")
 	}
@@ -116,7 +117,7 @@ func downloadFile(client *ssh.Client, args ...string) (string, error) {
 	}
 	defer localFile.Close()
 
-	bytesCopied, err := io.Copy(localFile, remoteFile)
+	bytesCopied, err := io.Copy(localFile, newInterruptibleReader(ctx, remoteFile))
 	if err != nil {
 		// Clean up partially downloaded file
 		os.Remove(localFilePath)
@@ -134,7 +135,7 @@ func downloadFile(client *ssh.Client, args ...string) (string, error) {
 }
 
 // uploadFile uploads a file from local machine to remote host
-func uploadFile(client *ssh.Client, args ...string) (string, error) {
+func uploadFile(ctx context.Context, client *ssh.Client, args ...string) (string, error) {
 	if len(args) != 2 {
 		return "", errors.New("upload requires exactly 2 arguments: localFilePath remoteFilePath")
 	}
@@ -182,7 +183,7 @@ func uploadFile(client *ssh.Client, args ...string) (string, error) {
 	}
 	defer remoteFile.Close()
 
-	bytesCopied, err := io.Copy(remoteFile, localFile)
+	bytesCopied, err := io.Copy(remoteFile, newInterruptibleReader(ctx, localFile))
 	if err != nil {
 		// Clean up partially uploaded file
 		sftpClient.Remove(remoteFilePath)
@@ -200,7 +201,7 @@ func uploadFile(client *ssh.Client, args ...string) (string, error) {
 }
 
 // executeLocalCommand executes a command on the local machine
-func execLocalCommand(_ *ssh.Client, args ...string) (string, error) {
+func execLocalCommand(ctx context.Context, _ *ssh.Client, args ...string) (string, error) {
 	if len(args) == 0 {
 		return "", errors.New("command execution requires at least one argument")
 	}
@@ -240,7 +241,7 @@ func execLocalCommand(_ *ssh.Client, args ...string) (string, error) {
 }
 
 // createRemoteDirectory creates a directory on the remote host
-func createRemoteDirectory(client *ssh.Client, args ...string) (string, error) {
+func createRemoteDirectory(ctx context.Context, client *ssh.Client, args ...string) (string, error) {
 	if len(args) != 1 {
 		return "", errors.New("mkdir requires exactly one argument: directoryPath")
 	}
@@ -289,4 +290,21 @@ func fileExists(client *ssh.Client, args ...string) (string, error) {
 	}
 
 	return "true", nil
+}
+
+type interruptibleReader func(p []byte) (n int, err error)
+
+func (r interruptibleReader) Read(p []byte) (n int, err error) {
+	return r(p)
+}
+
+func newInterruptibleReader(ctx context.Context, r io.Reader) io.Reader {
+	return interruptibleReader(func(p []byte) (n int, err error) {
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		default:
+			return r.Read(p)
+		}
+	})
 }
