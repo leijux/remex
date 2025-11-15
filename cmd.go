@@ -62,13 +62,6 @@ func ListCommands() []string {
 	return names
 }
 
-// FileTransferResult represents the result of file transfer operations
-type FileTransferResult struct {
-	BytesTransferred int64
-	SourcePath       string
-	TargetPath       string
-}
-
 // downloadFile downloads a file from remote host to local machine
 func downloadFile(ctx context.Context, client *ssh.Client, args ...string) (string, error) {
 	if len(args) != 2 {
@@ -124,14 +117,8 @@ func downloadFile(ctx context.Context, client *ssh.Client, args ...string) (stri
 		return "", fmt.Errorf("failed to copy file content: %w", err)
 	}
 
-	result := FileTransferResult{
-		BytesTransferred: bytesCopied,
-		SourcePath:       remoteFilePath,
-		TargetPath:       localFilePath,
-	}
-
 	return fmt.Sprintf("Download completed: %d bytes transferred from %s to %s",
-		result.BytesTransferred, result.SourcePath, result.TargetPath), nil
+		bytesCopied, remoteFilePath, localFilePath), nil
 }
 
 // uploadFile uploads a file from local machine to remote host
@@ -190,14 +177,8 @@ func uploadFile(ctx context.Context, client *ssh.Client, args ...string) (string
 		return "", fmt.Errorf("failed to copy file content: %w", err)
 	}
 
-	result := FileTransferResult{
-		BytesTransferred: bytesCopied,
-		SourcePath:       localFilePath,
-		TargetPath:       remoteFilePath,
-	}
-
 	return fmt.Sprintf("Upload completed: %d bytes transferred from %s to %s",
-		result.BytesTransferred, result.SourcePath, result.TargetPath), nil
+		bytesCopied, localFilePath, remoteFilePath), nil
 }
 
 // executeLocalCommand executes a command on the local machine
