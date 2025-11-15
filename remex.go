@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/netip"
 	"slices"
@@ -273,11 +274,44 @@ func ExecRemoteCommand(ctx context.Context, client *ssh.Client, command string) 
 	}
 	defer session.Close()
 
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("failed to get stdout: %w", err)
+	}
+
+	stderr, err := session.StderrPipe()
+	if err != nil {
+		return "", fmt.Errorf("failed to get stderr: %w", err)
+	}
+
+	// 启动命令（非阻塞）
+	if err := session.Start(command); err != nil {
+		return "", fmt.Errorf("failed to start command: %w", err)
+	}
+
+	outputCh := make(chan []byte)
+	errCh := make(chan error)
+
+	// 读取输出 goroutine
+	go func() {
+		out, _ := io.ReadAll(stdout)
+		errout, _ := io.ReadAll(stderr)
+		outputCh <- append(out, errout...)
+	}()
+
+	// 等待命令结束 goroutine
+	go func() {
+		errCh <- session.Wait()
+	}()
+
 	select {
 	case <-ctx.Done():
+		_ = session.Signal(ssh.SIGKILL) // 发送 KILL 信号到远程
+
 		return "", ctx.Err()
-	default:
-		output, err := session.CombinedOutput(command)
+	case err := <-errCh:
+		output := <-outputCh // 命令结束
+
 		if err != nil {
 			return string(output), fmt.Errorf("command execution failed: %w", err)
 		}
