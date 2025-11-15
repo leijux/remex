@@ -23,7 +23,7 @@ Remex（Remote Execution 的简写）是一个用 Go 语言编写的远程执行
 ### 获取代码
 
 ```bash
-git clone https://github.com/your-username/remex.git
+git clone https://github.com/leijux/remex.git
 cd remex
 ```
 
@@ -44,7 +44,8 @@ import (
     "context"
     "log/slog"
     "net/netip"
-    "remex"
+
+    "github.com/leijux/remex"
 )
 
 func main() {
@@ -132,7 +133,7 @@ remex.exec ls -la
 
 ```go
 // 定义自定义命令函数
-func myCustomCommand(client *ssh.Client, args ...string) (string, error) {
+func myCustomCommand(ctx context.Context, client *ssh.Client, args ...string) (string, error) {
     // 实现你的逻辑
     return "Custom command executed", nil
 }
