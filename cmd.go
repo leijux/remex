@@ -14,15 +14,15 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// remexCommand represents an internal command function
+// remexCommand represents an remex command function
 type remexCommand func(context.Context, *ssh.Client, ...string) (string, error)
 
-// internalRegistry manages internal commands
-type internalRegistry struct {
+// remexRegistry manages remex commands
+type remexRegistry struct {
 	commands map[string]remexCommand
 }
 
-var registry = &internalRegistry{
+var registry = &remexRegistry{
 	commands: map[string]remexCommand{
 		"remex.upload":   uploadFile,
 		"remex.download": downloadFile,
@@ -31,7 +31,7 @@ var registry = &internalRegistry{
 	},
 }
 
-// RegisterCommand registers a new internal command
+// RegisterCommand registers a new remex command
 func RegisterCommand(name string, command remexCommand) error {
 	if name == "" {
 		return errors.New("command name cannot be empty")
@@ -39,21 +39,21 @@ func RegisterCommand(name string, command remexCommand) error {
 	if command == nil {
 		return errors.New("command function cannot be nil")
 	}
-	if !strings.HasPrefix(name, "internal.") {
-		name = "internal." + name
+	if !strings.HasPrefix(name, "remex.") {
+		name = "remex." + name
 	}
 
 	registry.commands[name] = command
 	return nil
 }
 
-// GetCommand returns an internal command by name
+// GetCommand returns an remex command by name
 func GetCommand(name string) (remexCommand, bool) {
 	cmd, exists := registry.commands[name]
 	return cmd, exists
 }
 
-// ListCommands returns all registered internal command names
+// ListCommands returns all registered remex command names
 func ListCommands() []string {
 	names := make([]string, 0, len(registry.commands))
 	for name := range registry.commands {
