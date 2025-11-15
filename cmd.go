@@ -196,28 +196,12 @@ func execLocalCommand(ctx context.Context, _ *ssh.Client, args ...string) (strin
 		cmdArgs = args[1:]
 	}
 
-	cmd := exec.Command(command, cmdArgs...)
-
-	var output strings.Builder
-	var errorOutput strings.Builder
-
-	cmd.Stdout = &output
-	cmd.Stderr = &errorOutput
-
-	if err := cmd.Run(); err != nil {
-		errorMsg := errorOutput.String()
-		if errorMsg == "" {
-			errorMsg = err.Error()
-		}
-		return "", fmt.Errorf("command execution failed: %s - %w", errorMsg, err)
+	output, err := exec.CommandContext(ctx, command, cmdArgs...).CombinedOutput()
+	if err != nil {
+		return "", err
 	}
 
-	result := output.String()
-	if result == "" {
-		result = "Command executed successfully (no output)"
-	}
-
-	return result, nil
+	return string(output), nil
 }
 
 // createRemoteDirectory creates a directory on the remote host
