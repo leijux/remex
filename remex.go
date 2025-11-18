@@ -4,20 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/netip"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
-	"golang.org/x/crypto/ssh"
 	"golang.org/x/sync/errgroup"
 )
 
 // Config holds the configuration for distributed execution
 type Config struct {
+	Name string
+
 	SSHConfig SSHConfig
 	Commands  []string
 }
@@ -63,7 +62,7 @@ type ResultHandler func(ExecResult)
 
 // Remex represents a distributed command execution engine
 type Remex struct {
-	clients []*SSHClient
+	clients map[string]*SSHClient
 
 	config []*Config
 
@@ -114,7 +113,7 @@ func (r *Remex) RegisterHandler(handlers ...ResultHandler) {
 
 // notifyHandlers sends execution results to all registered handlers
 func (r *Remex) notifyHandlers(result ExecResult) {
-	result.Time = time.Now().Format("2006-01-02 15:04:05")
+	result.Time = time.Now().Format(time.DateTime)
 
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
@@ -128,19 +127,18 @@ func (r *Remex) notifyHandlers(result ExecResult) {
 
 // Connect establishes SSH connections to all remote hosts
 func (r *Remex) Connect() error {
-	var connectedClients []*SSHClient
-	var connectionErrors []string
+	var connectionErrors []error
 
 	for _, config := range r.config {
 		select {
 		case <-r.ctx.Done():
 			return r.ctx.Err()
 		default:
-			client, err := NewSSHClient(config.SSHConfig)
+			client, err := NewSSHClient(config.Name, config.SSHConfig)
 			if err != nil {
 				r.logger.Error("failed to establish SSH connection",
 					"remote", config.SSHConfig.Addr, "error", err)
-				connectionErrors = append(connectionErrors, err.Error())
+				connectionErrors = append(connectionErrors, err)
 
 				r.notifyHandlers(ExecResult{
 					Index:      -1,
@@ -150,16 +148,14 @@ func (r *Remex) Connect() error {
 
 				continue
 			}
-			connectedClients = append(connectedClients, client)
+			r.clients[config.Name] = client
 
 			r.logger.Info("SSH connection established", "remote", config.SSHConfig.Addr)
 		}
 	}
 
-	r.clients = connectedClients
-
 	if len(r.clients) == 0 {
-		return fmt.Errorf("no successful connections: %v", connectionErrors)
+		return fmt.Errorf("no successful connections: %w", errors.Join(connectionErrors...))
 	}
 
 	r.logger.Info("connections established",
@@ -255,88 +251,13 @@ func (r *Remex) Close() error {
 }
 
 // GetConnectedHosts returns the list of currently connected hosts
-func (r *Remex) GetConnectedHosts() []string {
+func (r *Remex) GetConnectedHosts() map[string]string {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
 
-	hosts := make([]string, len(r.clients))
-	for i, client := range r.clients {
-		hosts[i] = client.RemoteAddr().String()
+	hosts := make(map[string]string, len(r.clients))
+	for _, client := range r.clients {
+		hosts[client.Name] = client.RemoteAddr().String()
 	}
 	return hosts
-}
-
-// ExecuteRemoteCommand executes a command on the remote server and returns the output
-func ExecRemoteCommand(ctx context.Context, client *ssh.Client, command string) (string, error) {
-	session, err := client.NewSession()
-	if err != nil {
-		return "", fmt.Errorf("failed to create session: %w", err)
-	}
-	defer session.Close()
-
-	stdout, err := session.StdoutPipe()
-	if err != nil {
-		return "", fmt.Errorf("failed to get stdout: %w", err)
-	}
-
-	stderr, err := session.StderrPipe()
-	if err != nil {
-		return "", fmt.Errorf("failed to get stderr: %w", err)
-	}
-
-	// 启动命令（非阻塞）
-	if err := session.Start(command); err != nil {
-		return "", fmt.Errorf("failed to start command: %w", err)
-	}
-
-	outputCh := make(chan []byte)
-	errCh := make(chan error)
-
-	// 读取输出 goroutine
-	go func() {
-		out, _ := io.ReadAll(stdout)
-		errout, _ := io.ReadAll(stderr)
-		outputCh <- append(out, errout...)
-	}()
-
-	// 等待命令结束 goroutine
-	go func() {
-		errCh <- session.Wait()
-	}()
-
-	select {
-	case <-ctx.Done():
-		_ = session.Signal(ssh.SIGKILL) // 发送 KILL 信号到远程
-
-		return "", ctx.Err()
-	case err := <-errCh:
-		output := <-outputCh // 命令结束
-
-		if err != nil {
-			return string(output), fmt.Errorf("command execution failed: %w", err)
-		}
-		return string(output), nil
-	}
-}
-
-// ExecuteRemexCommand executes a command on the remote server and returns the output
-func ExecRemexCommand(ctx context.Context, client *ssh.Client, command string) (string, error) {
-	if client == nil {
-		return "", fmt.Errorf("ssh client is nil")
-	}
-
-	commandSplit := strings.Split(strings.TrimSpace(command), " ")
-	if len(commandSplit) == 0 {
-		return "", errors.New("invalid command")
-	}
-
-	if iFunc, exists := GetCommand(commandSplit[0]); exists {
-		output, err := iFunc(ctx, client, commandSplit[1:]...)
-		if err != nil {
-			return "", fmt.Errorf("internal command '%s' failed: %w", commandSplit[0], err)
-		}
-		return output, nil
-	}
-
-	return "", fmt.Errorf("unknown internal command: %s", commandSplit[0])
 }
