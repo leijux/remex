@@ -24,8 +24,18 @@ type SSHConfig struct {
 	Port uint16
 }
 
+// NewSSHConfig creates a default configuration
+func NewSSHConfig(remoteAddr netip.Addr, username, password string) *SSHConfig {
+	return &SSHConfig{
+		Username: username,
+		Password: password,
+		Addr:     remoteAddr,
+		Port:     DefaultSSHPort,
+	}
+}
+
 // Connect establishes an SSH connection
-func (config SSHConfig) Connect() (*ssh.Client, error) {
+func (config *SSHConfig) Connect() (*ssh.Client, error) {
 	sshConfig := &ssh.ClientConfig{
 		User: config.Username,
 		Auth: []ssh.AuthMethod{
@@ -45,39 +55,29 @@ func (config SSHConfig) Connect() (*ssh.Client, error) {
 }
 
 type SSHClient struct {
-	Name string
+	ID     string
+	config *SSHConfig
 
 	*ssh.Client
 }
 
 // NewSSHClient creates a new SSHClient instance
-func NewSSHClient(name string, config SSHConfig) (*SSHClient, error) {
+func NewSSHClient(ID string, config *SSHConfig) (*SSHClient, error) {
 	client, err := config.Connect()
 	if err != nil {
 		return nil, err
 	}
 
-	return &SSHClient{name, client}, nil
+	return &SSHClient{ID, config, client}, nil
 }
 
 // ExecuteCommand executes a command on the remote server and returns the output
 func (sc *SSHClient) ExecuteCommand(ctx context.Context, command string) (string, error) {
-	var (
-		output string
-		err    error
-	)
-
 	if strings.HasPrefix(command, "remex.") {
-		output, err = ExecRemexCommand(ctx, sc.Client, command)
+		return ExecRemexCommand(ctx, sc.Client, command)
 	} else {
-		output, err = ExecRemoteCommand(ctx, map[string]string{"REMEX_NAME": sc.Name}, sc.Client, command)
+		return ExecRemoteCommand(ctx, map[string]string{"REMEX_NAME": sc.ID}, sc.Client, command)
 	}
-
-	if err != nil {
-		return "", err
-	}
-
-	return output, nil
 }
 
 // ExecuteRemoteCommand executes a command on the remote server and returns the output

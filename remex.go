@@ -5,41 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/netip"
-	"slices"
 	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
 )
 
-// Config holds the configuration for distributed execution
-type Config struct {
-	Name string
-
-	SSHConfig SSHConfig
-	Commands  []string
-}
-
-// NewRemoteConfig creates a default configuration
-func NewRemoteConfig(remoteAddr netip.Addr, username, password string, commands []string) *Config {
-	config := &Config{
-		SSHConfig: SSHConfig{
-			Username: username,
-			Password: password,
-			Addr:     remoteAddr,
-			Port:     DefaultSSHPort,
-		},
-		Commands: commands,
-	}
-
-	return config
-}
-
 // ExecResult represents the result of command execution
 type ExecResult struct {
-	Index      int    `json:"index"`
-	RemoteAddr string `json:"remote_addr"`
+	Index      int          `json:"index"`
+	ID         string       `json:"id"`
+	RemoteAddr fmt.Stringer `json:"remote_addr"`
 
 	Error  error  `json:"error,omitempty"`
 	Output string `json:"output,omitempty"`
@@ -50,7 +26,8 @@ type ExecResult struct {
 func (er ExecResult) String() string {
 	return fmt.Sprintln(
 		"index:", er.Index,
-		"remote_addr:", er.RemoteAddr,
+		"id:", er.ID,
+		"remote_addr:", er.RemoteAddr.String(),
 		"error:", er.Error,
 		"output:", er.Output,
 		"time:", er.Time,
@@ -63,8 +40,7 @@ type ResultHandler func(ExecResult)
 // Remex represents a distributed command execution engine
 type Remex struct {
 	clients map[string]*SSHClient
-
-	config []*Config
+	configs map[string]*SSHConfig
 
 	logger *slog.Logger
 
@@ -77,30 +53,16 @@ type Remex struct {
 	mutex    sync.RWMutex
 }
 
-// NewWithConfig creates a new DistExec instance with the given configuration
-func NewWithConfig(config []*Config, logger *slog.Logger) *Remex {
-	ctx, cancel := context.WithCancel(context.Background())
+// NewWithContext creates a new DistExec instance with the given context and configuration
+func NewWithContext(ctx context.Context, logger *slog.Logger, configs map[string]*SSHConfig) *Remex {
+	ctx, cancel := context.WithCancel(ctx)
 	return &Remex{
 		logger:     logger,
-		config:     config,
+		configs:    configs,
 		ctx:        ctx,
 		cancelFunc: cancel,
 		errGroup:   &errgroup.Group{},
 	}
-}
-
-// NewWithContext creates a new DistExec instance with the given context and configuration
-func NewWithContext(ctx context.Context, config []*Config, logger *slog.Logger) *Remex {
-	ctx, cancel := context.WithCancel(ctx)
-	de := NewWithConfig(config, logger)
-
-	g, ctx := errgroup.WithContext(ctx)
-
-	de.ctx = ctx
-	de.cancelFunc = cancel
-	de.errGroup = g
-
-	return de
 }
 
 // RegisterHandler registers handler functions for receiving execution results
@@ -119,7 +81,7 @@ func (r *Remex) notifyHandlers(result ExecResult) {
 	defer r.mutex.RUnlock()
 
 	for _, handler := range r.handlers {
-		r.logger.Debug("notifying handler", "remote", result.RemoteAddr, "index", result.Index)
+		r.logger.Debug("notifying handler", "ID", result.ID, "remote", result.RemoteAddr, "index", result.Index)
 
 		handler(result)
 	}
@@ -129,28 +91,29 @@ func (r *Remex) notifyHandlers(result ExecResult) {
 func (r *Remex) Connect() error {
 	var connectionErrors []error
 
-	for _, config := range r.config {
+	for id, config := range r.configs {
 		select {
 		case <-r.ctx.Done():
 			return r.ctx.Err()
 		default:
-			client, err := NewSSHClient(config.Name, config.SSHConfig)
+			client, err := NewSSHClient(id, config)
 			if err != nil {
 				r.logger.Error("failed to establish SSH connection",
-					"remote", config.SSHConfig.Addr, "error", err)
+					"remote", config.Addr, "error", err)
 				connectionErrors = append(connectionErrors, err)
 
 				r.notifyHandlers(ExecResult{
 					Index:      -1,
-					RemoteAddr: config.SSHConfig.Addr.String(),
+					ID:         id,
+					RemoteAddr: config.Addr,
 					Error:      err,
 				})
 
 				continue
 			}
-			r.clients[config.Name] = client
+			r.clients[id] = client
 
-			r.logger.Info("SSH connection established", "remote", config.SSHConfig.Addr)
+			r.logger.Info("SSH connection established", "remote", config.Addr)
 		}
 	}
 
@@ -160,29 +123,46 @@ func (r *Remex) Connect() error {
 
 	r.logger.Info("connections established",
 		"successful", len(r.clients),
-		"total", len(r.config))
+		"total", len(r.configs))
 
 	return nil
 }
-
-// Execute executes commands on all connected remote hosts
-func (r *Remex) Execute() error {
+func (r *Remex) ExecuteWithID(id string, commands []string) error {
 	if len(r.clients) == 0 {
 		if err := r.Connect(); err != nil {
 			return fmt.Errorf("failed to connect: %w", err)
 		}
 	}
 
-	for _, client := range r.clients {
-		i := slices.IndexFunc(r.config, func(config *Config) bool {
-			return netip.AddrPortFrom(config.SSHConfig.Addr, config.SSHConfig.Port).String() == client.RemoteAddr().String()
-		})
+	client, ok := r.clients[id]
+	if !ok {
+		return fmt.Errorf("no client found for id %s", id)
+	}
 
-		if i == -1 {
-			return fmt.Errorf("failed to find config for remote host: %s", client.RemoteAddr().String())
+	r.logger.Debug("executing commands", "id", id, "remote", client.RemoteAddr().String())
+
+	r.errGroup.Go(func() error {
+		return r.execCommands(client, commands)
+	})
+
+	if err := r.errGroup.Wait(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Execute executes commands on all connected remote hosts
+func (r *Remex) Execute(commands []string) error {
+	if len(r.clients) == 0 {
+		if err := r.Connect(); err != nil {
+			return fmt.Errorf("failed to connect: %w", err)
 		}
-		client := client
-		commands := r.config[i].Commands
+	}
+
+	for id, client := range r.clients {
+		r.logger.Debug("executing commands", "id", id, "remote", client.RemoteAddr())
+
 		r.errGroup.Go(func() error {
 			return r.execCommands(client, commands)
 		})
@@ -198,33 +178,57 @@ func (r *Remex) Execute() error {
 // executeCommands executes all commands on a single remote host
 func (r *Remex) execCommands(client *SSHClient, commands []string) error {
 	var (
-		remoteAddr = client.RemoteAddr().String()
-		logger     = r.logger.With("remote", remoteAddr)
+		remoteAddr = client.RemoteAddr()
+		logger     = r.logger.With("name", client.ID, "remote", remoteAddr)
 	)
 
 	for i := 0; i < len(commands)*2; i += 2 {
 		command := commands[i/2]
 		select {
 		case <-r.ctx.Done():
-			logger.Info("execution cancelled")
+			logger.Debug("execution cancelled")
 			return r.ctx.Err()
 		default:
-			r.notifyHandlers(ExecResult{Index: i, RemoteAddr: remoteAddr})
+			r.notifyHandlers(ExecResult{Index: i, ID: client.ID, RemoteAddr: remoteAddr})
 
 			output, err := client.ExecuteCommand(r.ctx, command)
 
-			r.notifyHandlers(ExecResult{Index: i + 1, RemoteAddr: remoteAddr, Output: output, Error: err})
+			r.notifyHandlers(ExecResult{Index: i + 1, ID: client.ID, RemoteAddr: remoteAddr, Output: output, Error: err})
 
 			if err != nil {
 				return fmt.Errorf("failed to execute command: %s", command)
 			} else {
 				logger.Debug("command execution details", "command", command, "output", output)
 			}
-
 		}
 	}
 
 	logger.Info("command execution completed successfully")
+	return nil
+}
+
+// GetConnectedHosts returns the list of currently connected hosts
+func (r *Remex) GetConnectedHosts() map[string]string {
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+
+	hosts := make(map[string]string, len(r.clients))
+	for _, client := range r.clients {
+		hosts[client.ID] = client.RemoteAddr().String()
+	}
+	return hosts
+}
+
+// GetClientByName returns the SSHClient with the given name
+func (r *Remex) GetClientByName(name string) *SSHClient {
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+
+	for _, client := range r.clients {
+		if client.ID == name {
+			return client
+		}
+	}
 	return nil
 }
 
@@ -248,16 +252,4 @@ func (r *Remex) Close() error {
 
 	r.logger.Info("all connections closed")
 	return nil
-}
-
-// GetConnectedHosts returns the list of currently connected hosts
-func (r *Remex) GetConnectedHosts() map[string]string {
-	r.mutex.RLock()
-	defer r.mutex.RUnlock()
-
-	hosts := make(map[string]string, len(r.clients))
-	for _, client := range r.clients {
-		hosts[client.Name] = client.RemoteAddr().String()
-	}
-	return hosts
 }
