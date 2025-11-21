@@ -146,26 +146,37 @@ func uploadFile(ctx context.Context, client *ssh.Client, args ...string) (string
 		return "", errors.New("local path is a directory, not a file")
 	}
 
-	sftpClient, err := sftp.NewClient(client)
-	if err != nil {
-		return "", fmt.Errorf("failed to create SFTP client: %w", err)
-	}
-	defer sftpClient.Close()
-
-	// Create remote directory if it doesn't exist
-	if err := sftpClient.MkdirAll(filepath.ToSlash(filepath.Dir(remoteFilePath))); err != nil {
-		return "", fmt.Errorf("failed to create remote directory: %w", err)
-	}
-
 	localFile, err := os.Open(localFilePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to open local file: %w", err)
 	}
 	defer localFile.Close()
 
+	bytesCopied, err := UploadMemoryFile(ctx, client, remoteFilePath, localFile)
+	if err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("Upload completed: %d bytes transferred from %s to %s",
+		bytesCopied, localFilePath, remoteFilePath), nil
+}
+
+// UploadMemoryFile uploads a file from memory to the remote server.
+func UploadMemoryFile(ctx context.Context, client *ssh.Client, remoteFilePath string, reader io.Reader) (int64, error) {
+	sftpClient, err := sftp.NewClient(client)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create SFTP client: %w", err)
+	}
+	defer sftpClient.Close()
+
+	// Create remote directory if it doesn't exist
+	if err := sftpClient.MkdirAll(filepath.ToSlash(filepath.Dir(remoteFilePath))); err != nil {
+		return 0, fmt.Errorf("failed to create remote directory: %w", err)
+	}
+
 	remoteFile, err := sftpClient.Create(remoteFilePath)
 	if err != nil {
-		return "", fmt.Errorf("failed to create remote file: %w", err)
+		return 0, fmt.Errorf("failed to create remote file: %w", err)
 	}
 	defer remoteFile.Close()
 
@@ -173,11 +184,10 @@ func uploadFile(ctx context.Context, client *ssh.Client, args ...string) (string
 	if err != nil {
 		// Clean up partially uploaded file
 		sftpClient.Remove(remoteFilePath)
-		return "", fmt.Errorf("failed to copy file content: %w", err)
+		return 0, fmt.Errorf("failed to copy file content: %w", err)
 	}
 
-	return fmt.Sprintf("Upload completed: %d bytes transferred from %s to %s",
-		bytesCopied, localFilePath, remoteFilePath), nil
+	return bytesCopied, nil
 }
 
 // executeLocalCommand executes a command on the local machine
