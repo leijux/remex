@@ -110,7 +110,7 @@ func downloadFile(ctx context.Context, client *ssh.Client, args ...string) (stri
 	}
 	defer localFile.Close()
 
-	bytesCopied, err := io.Copy(localFile, newInterruptibleReader(ctx, remoteFile))
+	bytesCopied, err := io.Copy(localFile, NewInterruptibleReader(ctx, remoteFile))
 	if err != nil {
 		// Clean up partially downloaded file
 		os.Remove(localFilePath)
@@ -169,7 +169,7 @@ func uploadFile(ctx context.Context, client *ssh.Client, args ...string) (string
 	}
 	defer remoteFile.Close()
 
-	bytesCopied, err := io.Copy(remoteFile, newInterruptibleReader(ctx, localFile))
+	bytesCopied, err := io.Copy(remoteFile, NewInterruptibleReader(ctx, reader))
 	if err != nil {
 		// Clean up partially uploaded file
 		sftpClient.Remove(remoteFilePath)
@@ -262,7 +262,7 @@ func (r interruptibleReader) Read(p []byte) (n int, err error) {
 	return r(p)
 }
 
-func newInterruptibleReader(ctx context.Context, r io.Reader) io.Reader {
+func NewInterruptibleReader(ctx context.Context, r io.Reader) io.Reader {
 	return interruptibleReader(func(p []byte) (n int, err error) {
 		select {
 		case <-ctx.Done():
