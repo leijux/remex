@@ -1,17 +1,19 @@
 package remex
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
+	"mvdan.cc/sh/v3/interp"
+	"mvdan.cc/sh/v3/syntax"
 )
 
 // remexCommand represents an remex command function
@@ -26,7 +28,7 @@ var registry = &remexRegistry{
 	commands: map[string]remexCommand{
 		"remex.upload":   uploadFile,
 		"remex.download": downloadFile,
-		"remex.exec":     execLocalCommand,
+		"remex.sh":       shScript,
 		"remex.mkdir":    createRemoteDirectory,
 	},
 }
@@ -190,28 +192,20 @@ func UploadMemoryFile(ctx context.Context, client *ssh.Client, remoteFilePath st
 	return bytesCopied, nil
 }
 
-// executeLocalCommand executes a command on the local machine
-func execLocalCommand(ctx context.Context, _ *ssh.Client, args ...string) (string, error) {
+// shCommand run sh script
+func shScript(ctx context.Context, _ *ssh.Client, args ...string) (string, error) {
 	if len(args) == 0 {
 		return "", errors.New("command execution requires at least one argument")
 	}
 
-	command := strings.TrimSpace(args[0])
-	if command == "" {
-		return "", errors.New("command cannot be empty")
-	}
+	var b bytes.Buffer
+	file, _ := syntax.NewParser().Parse(strings.NewReader(strings.Join(args, " ")), "")
+	runner, _ := interp.New(
+		// interp.Env(expand.ListEnviron("GLOBAL=global_value")),
+		interp.StdIO(nil, &b, &b),
+	)
 
-	var cmdArgs []string
-	if len(args) > 1 {
-		cmdArgs = args[1:]
-	}
-
-	output, err := exec.CommandContext(ctx, command, cmdArgs...).CombinedOutput()
-	if err != nil {
-		return "", err
-	}
-
-	return string(output), nil
+	return b.String(), runner.Run(ctx, file)
 }
 
 // createRemoteDirectory creates a directory on the remote host
