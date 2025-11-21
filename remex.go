@@ -57,8 +57,9 @@ type Remex struct {
 func NewWithContext(ctx context.Context, logger *slog.Logger, configs map[string]*SSHConfig) *Remex {
 	ctx, cancel := context.WithCancel(ctx)
 	return &Remex{
-		logger:     logger,
+		clients:    make(map[string]*SSHClient),
 		configs:    configs,
+		logger:     logger,
 		ctx:        ctx,
 		cancelFunc: cancel,
 		errGroup:   &errgroup.Group{},
