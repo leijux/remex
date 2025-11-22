@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -20,18 +21,12 @@ type ExecResult struct {
 	Error  error  `json:"error,omitempty"`
 	Output string `json:"output,omitempty"`
 
-	Time string `json:"time"`
+	Time time.Time `json:"time"`
 }
 
 func (er ExecResult) String() string {
-	return fmt.Sprintln(
-		"index:", er.Index,
-		"id:", er.ID,
-		"remote_addr:", er.RemoteAddr.String(),
-		"error:", er.Error,
-		"output:", er.Output,
-		"time:", er.Time,
-	)
+	return fmt.Sprintf(`{"index":%d, "id":%s, "remote_addr":%v, "error":%v, "output":%s, "time":%v}`,
+		er.Index, er.ID, er.RemoteAddr, er.Error, er.Output, er.Time)
 }
 
 // ResultHandler is a function type for handling execution results
@@ -76,7 +71,7 @@ func (r *Remex) RegisterHandler(handlers ...ResultHandler) {
 
 // notifyHandlers sends execution results to all registered handlers
 func (r *Remex) notifyHandlers(result ExecResult) {
-	result.Time = time.Now().Format(time.DateTime)
+	result.Time = time.Now()
 
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
@@ -215,7 +210,16 @@ func (r *Remex) GetConnectedHosts() map[string]string {
 
 	hosts := make(map[string]string, len(r.clients))
 	for _, client := range r.clients {
-		hosts[client.ID] = client.RemoteAddr().String()
+		// 安全地处理可能为 nil 的客户端
+		if client != nil {
+			addr := client.RemoteAddr()
+			// 检查 addr 是否为零值
+			if addr != (netip.AddrPort{}) {
+				hosts[client.ID] = addr.String()
+			} else {
+				hosts[client.ID] = "unknown"
+			}
+		}
 	}
 	return hosts
 }
