@@ -12,6 +12,7 @@ import (
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
+	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/interp"
 	"mvdan.cc/sh/v3/syntax"
 )
@@ -165,6 +166,13 @@ func uploadFile(ctx context.Context, client *ssh.Client, args ...string) (string
 
 // UploadMemoryFile uploads a file from memory to the remote server.
 func UploadMemoryFile(ctx context.Context, client *ssh.Client, remoteFilePath string, reader io.Reader) (int64, error) {
+	if client == nil {
+		return 0, errors.New("ssh client is nil")
+	}
+	if remoteFilePath == "" {
+		return 0, errors.New("remote file path cannot be empty")
+	}
+
 	sftpClient, err := sftp.NewClient(client)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create SFTP client: %w", err)
@@ -201,11 +209,13 @@ func shScript(ctx context.Context, _ *ssh.Client, args ...string) (string, error
 	var b bytes.Buffer
 	file, _ := syntax.NewParser().Parse(strings.NewReader(strings.Join(args, " ")), "")
 	runner, _ := interp.New(
-		// interp.Env(expand.ListEnviron("GLOBAL=global_value")),
+		interp.Env(expand.ListEnviron(os.Environ()...)),
 		interp.StdIO(nil, &b, &b),
 	)
-
-	return b.String(), runner.Run(ctx, file)
+	if err := runner.Run(ctx, file); err != nil {
+		return "", err
+	}
+	return b.String(), nil
 }
 
 // createRemoteDirectory creates a directory on the remote host
