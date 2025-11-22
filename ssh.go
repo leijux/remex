@@ -19,18 +19,20 @@ var (
 type SSHConfig struct {
 	Username string
 	Password string
+	Addr     netip.Addr
+	Port     uint16
 
-	Addr netip.Addr
-	Port uint16
+	autoRootPassword bool
 }
 
 // NewSSHConfig creates a default configuration
 func NewSSHConfig(remoteAddr netip.Addr, username, password string) *SSHConfig {
 	return &SSHConfig{
-		Username: username,
-		Password: password,
-		Addr:     remoteAddr,
-		Port:     DefaultSSHPort,
+		Username:         username,
+		Password:         password,
+		Addr:             remoteAddr,
+		Port:             DefaultSSHPort,
+		autoRootPassword: true,
 	}
 }
 
@@ -73,15 +75,41 @@ func NewSSHClient(ID string, config *SSHConfig) (*SSHClient, error) {
 
 // ExecuteCommand executes a command on the remote server and returns the output
 func (sc *SSHClient) ExecuteCommand(ctx context.Context, command string) (string, error) {
+	if sc.Client == nil {
+		return "", errors.New("SSH client is not connected")
+	}
+
 	if strings.HasPrefix(command, "remex.") {
 		return ExecRemexCommand(ctx, sc.Client, command)
 	} else {
-		return ExecRemoteCommand(ctx, map[string]string{"REMEX_NAME": sc.ID}, sc.Client, command)
+		return ExecRemoteCommand(ctx, map[string]string{"REMEX_NAME": sc.ID}, sc.Client, sc.config.Password, command, sc.config.autoRootPassword)
 	}
 }
 
+// RemoteAddr returns the remote address of the SSH connection
+func (sc *SSHClient) RemoteAddr() netip.AddrPort {
+	if sc.config == nil {
+		return netip.AddrPort{}
+	}
+
+	return netip.AddrPortFrom(sc.config.Addr, sc.config.Port)
+}
+
+// Close closes the SSH connection
+func (sc *SSHClient) Close() error {
+	if sc.Client == nil {
+		return nil
+	}
+
+	return sc.Client.Close()
+}
+
 // ExecuteRemoteCommand executes a command on the remote server and returns the output
-func ExecRemoteCommand(ctx context.Context, env map[string]string, client *ssh.Client, command string) (string, error) {
+func ExecRemoteCommand(ctx context.Context, env map[string]string, client *ssh.Client, password, command string, autoRootPassword bool) (string, error) {
+	if client == nil {
+		return "", errors.New("SSH client is nil")
+	}
+
 	session, err := client.NewSession()
 	if err != nil {
 		return "", fmt.Errorf("failed to create session: %w", err)
@@ -102,6 +130,16 @@ func ExecRemoteCommand(ctx context.Context, env map[string]string, client *ssh.C
 		errCh <- err
 		outputCh <- output
 	}()
+
+	if autoRootPassword && strings.HasPrefix(command, "sudo") {
+		stdin, err := session.StdinPipe()
+		if err != nil {
+			return "", err
+		}
+		defer stdin.Close()
+
+		fmt.Fprintln(stdin, password)
+	}
 
 	select {
 	case <-ctx.Done():
