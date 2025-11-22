@@ -10,31 +10,6 @@ import (
 	"time"
 )
 
-// mockSSHClientForRemex 模拟 SSH 客户端用于 remex 测试
-type mockSSHClientForRemex struct {
-	ID         string
-	config     *SSHConfig
-	executeErr error
-	output     string
-	closed     bool
-}
-
-func (m *mockSSHClientForRemex) ExecuteCommand(ctx context.Context, command string) (string, error) {
-	if m.executeErr != nil {
-		return "", m.executeErr
-	}
-	return m.output, nil
-}
-
-func (m *mockSSHClientForRemex) RemoteAddr() netip.AddrPort {
-	return netip.AddrPortFrom(m.config.Addr, m.config.Port)
-}
-
-func (m *mockSSHClientForRemex) Close() error {
-	m.closed = true
-	return nil
-}
-
 // TestExecResult 测试 ExecResult 结构体
 func TestExecResult(t *testing.T) {
 	addr := netip.MustParseAddr("192.168.1.1")
