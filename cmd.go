@@ -155,7 +155,7 @@ func uploadFile(ctx context.Context, client *ssh.Client, args ...string) (string
 	}
 	defer localFile.Close()
 
-	bytesCopied, err := UploadMemoryFile(ctx, client, remoteFilePath, localFile)
+	bytesCopied, err := UploadMemoryFile(ctx, client, localFile, remoteFilePath)
 	if err != nil {
 		return "", err
 	}
@@ -164,8 +164,20 @@ func uploadFile(ctx context.Context, client *ssh.Client, args ...string) (string
 		bytesCopied, localFilePath, remoteFilePath), nil
 }
 
+func UploadMemoryFileCommand(reader io.Reader, remoteFilePath string) remexCommand {
+	return func(ctx context.Context, client *ssh.Client, _ ...string) (string, error) {
+		bytesCopied, err := UploadMemoryFile(ctx, client, reader, remoteFilePath)
+		if err != nil {
+			return "", err
+		}
+
+		return fmt.Sprintf("Upload completed: %d bytes to %s",
+			bytesCopied, remoteFilePath), nil
+	}
+}
+
 // UploadMemoryFile uploads a file from memory to the remote server.
-func UploadMemoryFile(ctx context.Context, client *ssh.Client, remoteFilePath string, reader io.Reader) (int64, error) {
+func UploadMemoryFile(ctx context.Context, client *ssh.Client, reader io.Reader, remoteFilePath string) (int64, error) {
 	if client == nil {
 		return 0, errors.New("ssh client is nil")
 	}
