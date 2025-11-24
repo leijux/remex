@@ -56,8 +56,15 @@ func (config *SSHConfig) Connect() (*ssh.Client, error) {
 	return client, nil
 }
 
+type RemoteClient interface {
+	ID() string
+	RemoteAddr() netip.AddrPort
+	ExecuteCommand(ctx context.Context, cmd string) (string, error)
+	Close() error
+}
+
 type SSHClient struct {
-	ID     string
+	id     string
 	config *SSHConfig
 
 	*ssh.Client
@@ -73,6 +80,11 @@ func NewSSHClient(ID string, config *SSHConfig) (*SSHClient, error) {
 	return &SSHClient{ID, config, client}, nil
 }
 
+// ID returns the ID of the SSHClient instance
+func (sc *SSHClient) ID() string {
+	return sc.id
+}
+
 // ExecuteCommand executes a command on the remote server and returns the output
 func (sc *SSHClient) ExecuteCommand(ctx context.Context, command string) (string, error) {
 	if sc.Client == nil {
@@ -82,7 +94,7 @@ func (sc *SSHClient) ExecuteCommand(ctx context.Context, command string) (string
 	if strings.HasPrefix(command, "remex.") {
 		return ExecRemexCommand(ctx, sc.Client, command)
 	} else {
-		return ExecRemoteCommand(ctx, map[string]string{"REMEX_NAME": sc.ID}, sc.Client, sc.config.Password, command, sc.config.autoRootPassword)
+		return ExecRemoteCommand(ctx, map[string]string{"REMEX_NAME": sc.ID()}, sc.Client, sc.config.Password, command, sc.config.autoRootPassword)
 	}
 }
 
