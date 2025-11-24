@@ -164,6 +164,7 @@ func uploadFile(ctx context.Context, client *ssh.Client, args ...string) (string
 		bytesCopied, localFilePath, remoteFilePath), nil
 }
 
+// UploadMemoryFileCommand uploads a file from memory to the remote server.
 func UploadMemoryFileCommand(reader io.Reader, remoteFilePath string) remexCommand {
 	return func(ctx context.Context, client *ssh.Client, _ ...string) (string, error) {
 		bytesCopied, err := UploadMemoryFile(ctx, client, reader, remoteFilePath)
@@ -212,7 +213,7 @@ func UploadMemoryFile(ctx context.Context, client *ssh.Client, reader io.Reader,
 	return bytesCopied, nil
 }
 
-// shCommand run sh script
+// shScript runs a shell script on the remote host
 func shScript(ctx context.Context, _ *ssh.Client, args ...string) (string, error) {
 	if len(args) == 0 {
 		return "", errors.New("command execution requires at least one argument")
