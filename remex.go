@@ -185,7 +185,7 @@ func (r *Remex) Execute(commands []string) error {
 func (r *Remex) execCommands(client RemoteClient, commands []string) error {
 	var (
 		remoteAddr = client.RemoteAddr()
-		logger     = r.logger.With("name", client.ID(), "remote", remoteAddr)
+		logger     = r.logger.With("id", client.ID(), "remote", remoteAddr)
 	)
 
 	for i := 0; i < len(commands); i++ {
