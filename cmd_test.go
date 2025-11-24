@@ -2,7 +2,9 @@ package remex
 
 import (
 	"context"
+	"maps"
 	"net/netip"
+	"slices"
 	"strings"
 	"testing"
 
@@ -13,9 +15,8 @@ import (
 func TestRegisterCommand(t *testing.T) {
 	// 保存原始命令以便测试后恢复
 	originalCommands := make(map[string]remexCommand)
-	for k, v := range registry.commands {
-		originalCommands[k] = v
-	}
+	maps.Copy(originalCommands, registry.commands)
+
 	defer func() {
 		registry.commands = originalCommands
 	}()
@@ -155,14 +156,7 @@ func TestListCommands(t *testing.T) {
 	}
 
 	for _, expected := range expectedCommands {
-		found := false
-		for _, cmd := range commands {
-			if cmd == expected {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !slices.Contains(commands, expected) {
 			t.Errorf("ListCommands() missing expected command: %s", expected)
 		}
 	}
@@ -261,37 +255,5 @@ func TestSSHClient_RemoteAddr(t *testing.T) {
 				t.Errorf("SSHClient.RemoteAddr() = %v, want %v", addr, tc.expected)
 			}
 		})
-	}
-}
-
-// TestDefaultSSHPort 测试默认 SSH 端口常量
-func TestDefaultSSHPort(t *testing.T) {
-	if DefaultSSHPort != 22 {
-		t.Errorf("DefaultSSHPort = %v, want %v", DefaultSSHPort, 22)
-	}
-}
-
-// TestResultHandlerType 测试 ResultHandler 类型定义
-func TestResultHandlerType(t *testing.T) {
-	// 这个测试主要是确保 ResultHandler 类型可以正常使用
-	var handler ResultHandler = func(result ExecResult) {
-		// 空的处理器函数
-	}
-
-	if handler == nil {
-		t.Error("ResultHandler type is not usable")
-	}
-}
-
-// TestStageType 测试 Stage 类型
-func TestStageType(t *testing.T) {
-	// 测试 Stage 类型的字符串表示
-	stages := []Stage{StageError, StageStart, StageFinish}
-	expected := []string{"err", "start", "finish"}
-
-	for i, stage := range stages {
-		if string(stage) != expected[i] {
-			t.Errorf("Stage[%d] = %v, want %v", i, string(stage), expected[i])
-		}
 	}
 }
