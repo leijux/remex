@@ -94,7 +94,7 @@ func (sc *SSHClient) ExecuteCommand(ctx context.Context, command string) (string
 	if strings.HasPrefix(command, "remex.") {
 		return ExecRemexCommand(ctx, sc.Client, command)
 	} else {
-		return ExecRemoteCommand(ctx, map[string]string{"REMEX_NAME": sc.ID()}, sc.Client, sc.config.Password, command, sc.config.autoRootPassword)
+		return ExecRemoteCommand(ctx, map[string]string{remexID: sc.ID()}, sc.Client, sc.config.Password, command, sc.config.autoRootPassword)
 	}
 }
 

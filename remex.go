@@ -6,11 +6,15 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/valyala/fasttemplate"
 	"golang.org/x/sync/errgroup"
 )
+
+const remexID = "REMEX_ID"
 
 type Stage string
 
@@ -160,6 +164,10 @@ func (r *Remex) ExecuteWithID(id string, command string) (string, error) {
 func (r *Remex) Execute(commands []string) error {
 	for id, client := range r.clients {
 		r.logger.Debug("executing commands", "id", id, "remote", client.RemoteAddr())
+
+		commands = strings.Split(fasttemplate.ExecuteString(strings.Join(commands, "\n"), "{{", "}}", map[string]any{
+			remexID: id,
+		}), "\n")
 
 		r.errGroup.Go(func() error {
 			return r.execCommands(client, commands)
