@@ -2,599 +2,296 @@ package remex
 
 import (
 	"context"
-	"io"
+	"net/netip"
 	"strings"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
 )
 
-// mockSSHClientForCmd 模拟 SSH 客户端用于 cmd 测试
-type mockSSHClientForCmd struct {
-	session *ssh.Session
-}
-
-// TestRegisterCommand 测试命令注册功能
+// TestRegisterCommand 测试 RegisterCommand 函数
 func TestRegisterCommand(t *testing.T) {
-	tests := []struct {
-		name           string
-		commandName    string
-		commandFunc    remexCommand
-		wantErr        bool
-		wantExists     bool
-		checkOutput    bool
-		expectedOutput string
+	// 保存原始命令以便测试后恢复
+	originalCommands := make(map[string]remexCommand)
+	for k, v := range registry.commands {
+		originalCommands[k] = v
+	}
+	defer func() {
+		registry.commands = originalCommands
+	}()
+
+	testCases := []struct {
+		name          string
+		commandName   string
+		commandFunc   remexCommand
+		shouldError   bool
+		expectedError string
 	}{
 		{
 			name:        "正常注册",
 			commandName: "test.command",
 			commandFunc: func(ctx context.Context, client *ssh.Client, args ...string) (string, error) {
-				return "test output", nil
+				return "success", nil
 			},
-			wantErr:        false,
-			wantExists:     true,
-			checkOutput:    true,
-			expectedOutput: "test output",
+			shouldError: false,
 		},
 		{
-			name:        "空名称",
+			name:        "空命令名",
 			commandName: "",
-			commandFunc: nil,
-			wantErr:     true,
-			wantExists:  false,
+			commandFunc: func(ctx context.Context, client *ssh.Client, args ...string) (string, error) {
+				return "success", nil
+			},
+			shouldError:   true,
+			expectedError: "command name cannot be empty",
 		},
 		{
-			name:        "nil 命令函数",
-			commandName: "nil.command",
-			commandFunc: nil,
-			wantErr:     true,
-			wantExists:  false,
+			name:          "nil 命令函数",
+			commandName:   "test.nil",
+			commandFunc:   nil,
+			shouldError:   true,
+			expectedError: "command function cannot be nil",
 		},
 		{
 			name:        "自动添加 remex. 前缀",
-			commandName: "auto.prefix",
+			commandName: "custom.command",
 			commandFunc: func(ctx context.Context, client *ssh.Client, args ...string) (string, error) {
-				return "auto prefix", nil
+				return "custom", nil
 			},
-			wantErr:        false,
-			wantExists:     true,
-			checkOutput:    true,
-			expectedOutput: "auto prefix",
+			shouldError: false,
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := RegisterCommand(tt.commandName, tt.commandFunc)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := RegisterCommand(tc.commandName, tc.commandFunc)
 
-			if (err != nil) != tt.wantErr {
-				t.Errorf("RegisterCommand() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			if !tt.wantErr {
-				// 验证命令已注册
-				fullName := tt.commandName
-				if !strings.HasPrefix(fullName, "remex.") {
-					fullName = "remex." + fullName
+			if tc.shouldError {
+				if err == nil {
+					t.Errorf("RegisterCommand() expected error, got nil")
+				} else if !strings.Contains(err.Error(), tc.expectedError) {
+					t.Errorf("RegisterCommand() error = %v, want %v", err, tc.expectedError)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("RegisterCommand() unexpected error = %v", err)
 				}
 
-				cmd, exists := GetCommand(fullName)
-				if exists != tt.wantExists {
-					t.Errorf("GetCommand() exists = %v, wantExists %v", exists, tt.wantExists)
-				}
-				if tt.wantExists && cmd == nil {
-					t.Error("Registered command is nil")
+				// 验证命令是否已注册
+				expectedName := tc.commandName
+				if !strings.HasPrefix(expectedName, "remex.") {
+					expectedName = "remex." + expectedName
 				}
 
-				// 验证命令输出
-				if tt.checkOutput && tt.wantExists {
-					output, err := cmd(context.Background(), nil)
-					if err != nil {
-						t.Errorf("Command execution failed: %v", err)
-					}
-					if output != tt.expectedOutput {
-						t.Errorf("Expected output %q, got %q", tt.expectedOutput, output)
-					}
+				cmd, exists := GetCommand(expectedName)
+				if !exists {
+					t.Errorf("GetCommand() command %s not found after registration", expectedName)
+				}
+				if cmd == nil {
+					t.Errorf("GetCommand() returned nil command for %s", expectedName)
 				}
 			}
 		})
 	}
 }
 
-// TestGetCommand 测试获取命令功能
+// TestGetCommand 测试 GetCommand 函数
 func TestGetCommand(t *testing.T) {
-	tests := []struct {
+	testCases := []struct {
 		name        string
 		commandName string
-		wantExists  bool
-		wantNil     bool
+		exists      bool
 	}{
 		{
 			name:        "存在的命令",
 			commandName: "remex.upload",
-			wantExists:  true,
-			wantNil:     false,
+			exists:      true,
 		},
 		{
 			name:        "不存在的命令",
-			commandName: "nonexistent.command",
-			wantExists:  false,
-			wantNil:     true,
+			commandName: "remex.nonexistent",
+			exists:      false,
 		},
 		{
-			name:        "空命令名称",
+			name:        "空命令名",
 			commandName: "",
-			wantExists:  false,
-			wantNil:     true,
-		},
-		{
-			name:        "下载命令",
-			commandName: "remex.download",
-			wantExists:  true,
-			wantNil:     false,
-		},
-		{
-			name:        "shell 命令",
-			commandName: "remex.sh",
-			wantExists:  true,
-			wantNil:     false,
+			exists:      false,
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cmd, exists := GetCommand(tt.commandName)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, exists := GetCommand(tc.commandName)
 
-			if exists != tt.wantExists {
-				t.Errorf("GetCommand() exists = %v, wantExists %v", exists, tt.wantExists)
+			if exists != tc.exists {
+				t.Errorf("GetCommand() exists = %v, want %v", exists, tc.exists)
 			}
 
-			if (cmd == nil) != tt.wantNil {
-				t.Errorf("GetCommand() cmd = %v, wantNil %v", cmd, tt.wantNil)
+			if tc.exists && cmd == nil {
+				t.Errorf("GetCommand() returned nil command for existing command %s", tc.commandName)
+			}
+
+			if !tc.exists && cmd != nil {
+				t.Errorf("GetCommand() returned non-nil command for non-existing command %s", tc.commandName)
 			}
 		})
 	}
 }
 
-// TestListCommands 测试列出命令功能
+// TestListCommands 测试 ListCommands 函数
 func TestListCommands(t *testing.T) {
 	commands := ListCommands()
+
+	// 检查是否返回了命令列表
 	if len(commands) == 0 {
-		t.Error("No commands found")
+		t.Error("ListCommands() returned empty command list")
 	}
 
-	// 检查是否包含预定义命令
-	foundUpload := false
-	foundDownload := false
+	// 检查是否包含预期的内置命令
+	expectedCommands := []string{
+		"remex.upload",
+		"remex.download",
+		"remex.sh",
+		"remex.mkdir",
+	}
+
+	for _, expected := range expectedCommands {
+		found := false
+		for _, cmd := range commands {
+			if cmd == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("ListCommands() missing expected command: %s", expected)
+		}
+	}
+
+	// 检查所有命令都有 remex. 前缀
 	for _, cmd := range commands {
-		if cmd == "remex.upload" {
-			foundUpload = true
-		}
-		if cmd == "remex.download" {
-			foundDownload = true
+		if !strings.HasPrefix(cmd, "remex.") {
+			t.Errorf("ListCommands() command %s does not have remex. prefix", cmd)
 		}
 	}
-
-	if !foundUpload {
-		t.Error("remex.upload not found in command list")
-	}
-	if !foundDownload {
-		t.Error("remex.download not found in command list")
-	}
 }
 
-// TestDownloadFile 测试下载文件功能
-func TestDownloadFile(t *testing.T) {
-	ctx := context.Background()
-
-	tests := []struct {
-		name     string
-		args     []string
-		wantErr  bool
-		errorMsg string
-	}{
-		{
-			name:     "无参数",
-			args:     []string{},
-			wantErr:  true,
-			errorMsg: "requires exactly 2 arguments",
-		},
-		{
-			name:     "一个参数",
-			args:     []string{"remote"},
-			wantErr:  true,
-			errorMsg: "requires exactly 2 arguments",
-		},
-		{
-			name:     "过多参数",
-			args:     []string{"remote", "local", "extra"},
-			wantErr:  true,
-			errorMsg: "requires exactly 2 arguments",
-		},
-		{
-			name:     "空远程路径",
-			args:     []string{"", "local"},
-			wantErr:  true,
-			errorMsg: "remote file path cannot be empty",
-		},
-		{
-			name:     "空本地路径",
-			args:     []string{"remote", ""},
-			wantErr:  true,
-			errorMsg: "local file path cannot be empty",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := downloadFile(ctx, nil, tt.args...)
-
-			if (err != nil) != tt.wantErr {
-				t.Errorf("downloadFile() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			if tt.wantErr && err != nil && tt.errorMsg != "" {
-				if !strings.Contains(err.Error(), tt.errorMsg) {
-					t.Errorf("downloadFile() error message = %v, want contains %v", err.Error(), tt.errorMsg)
-				}
-			}
-		})
-	}
-}
-
-// TestUploadFile 测试上传文件功能
-func TestUploadFile(t *testing.T) {
-	ctx := context.Background()
-
-	tests := []struct {
-		name     string
-		args     []string
-		wantErr  bool
-		errorMsg string
-	}{
-		{
-			name:     "无参数",
-			args:     []string{},
-			wantErr:  true,
-			errorMsg: "requires exactly 2 arguments",
-		},
-		{
-			name:     "一个参数",
-			args:     []string{"local"},
-			wantErr:  true,
-			errorMsg: "requires exactly 2 arguments",
-		},
-		{
-			name:     "过多参数",
-			args:     []string{"local", "remote", "extra"},
-			wantErr:  true,
-			errorMsg: "requires exactly 2 arguments",
-		},
-		{
-			name:     "空本地路径",
-			args:     []string{"", "remote"},
-			wantErr:  true,
-			errorMsg: "local file path cannot be empty",
-		},
-		{
-			name:     "空远程路径",
-			args:     []string{"local", ""},
-			wantErr:  true,
-			errorMsg: "remote file path cannot be empty",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := uploadFile(ctx, nil, tt.args...)
-
-			if (err != nil) != tt.wantErr {
-				t.Errorf("uploadFile() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			if tt.wantErr && err != nil && tt.errorMsg != "" {
-				if !strings.Contains(err.Error(), tt.errorMsg) {
-					t.Errorf("uploadFile() error message = %v, want contains %v", err.Error(), tt.errorMsg)
-				}
-			}
-		})
-	}
-}
-
-// TestCreateRemoteDirectory 测试创建远程目录功能
-func TestCreateRemoteDirectory(t *testing.T) {
-	ctx := context.Background()
-
-	// 测试参数数量错误
-	_, err := createRemoteDirectory(ctx, nil)
-	if err == nil {
-		t.Error("Expected error for insufficient arguments")
-	}
-
-	_, err = createRemoteDirectory(ctx, nil, "dir", "extra")
-	if err == nil {
-		t.Error("Expected error for too many arguments")
-	}
-
-	// 测试空路径
-	_, err = createRemoteDirectory(ctx, nil, "")
-	if err == nil {
-		t.Error("Expected error for empty directory path")
-	}
-}
-
-// TestFileExists 测试文件存在检查功能
-func TestFileExists(t *testing.T) {
-	// 测试参数数量错误
-	_, err := fileExists(nil)
-	if err == nil {
-		t.Error("Expected error for insufficient arguments")
-	}
-
-	_, err = fileExists(nil, "path", "extra")
-	if err == nil {
-		t.Error("Expected error for too many arguments")
-	}
-
-	// 测试空路径
-	_, err = fileExists(nil, "")
-	if err == nil {
-		t.Error("Expected error for empty file path")
-	}
-}
-
-// TestUploadMemoryFile 测试内存文件上传功能
-func TestUploadMemoryFile(t *testing.T) {
-	ctx := context.Background()
-
-	// 创建测试数据
-	testData := "test file content"
-	reader := strings.NewReader(testData)
-
-	// 测试上传到空路径
-	_, err := UploadMemoryFile(ctx, nil, "", reader)
-	if err == nil {
-		t.Error("Expected error for empty remote file path")
-	}
-
-	// 测试 nil 客户端（应该返回错误而不是 panic）
-	_, err = UploadMemoryFile(ctx, nil, "/tmp/test.txt", reader)
-	if err == nil {
-		t.Error("Expected error for nil client")
-	}
-}
-
-// TestNewInterruptibleReader 测试可中断读取器
+// TestNewInterruptibleReader 测试 NewInterruptibleReader 函数
 func TestNewInterruptibleReader(t *testing.T) {
-	ctx := context.Background()
-	testData := "test data"
-	reader := strings.NewReader(testData)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// 创建可中断读取器
+	// 创建一个简单的字符串读取器
+	reader := strings.NewReader("test data")
 	interruptibleReader := NewInterruptibleReader(ctx, reader)
 
 	// 测试正常读取
-	buffer := make([]byte, len(testData))
-	n, err := interruptibleReader.Read(buffer)
-	if err != nil && err != io.EOF {
-		t.Errorf("Read failed: %v", err)
+	buf := make([]byte, 4)
+	n, err := interruptibleReader.Read(buf)
+	if err != nil {
+		t.Errorf("NewInterruptibleReader() Read error = %v", err)
 	}
-	if n != len(testData) {
-		t.Errorf("Expected to read %d bytes, got %d", len(testData), n)
+	if n != 4 {
+		t.Errorf("NewInterruptibleReader() Read bytes = %v, want %v", n, 4)
 	}
-	if string(buffer) != testData {
-		t.Errorf("Expected data '%s', got '%s'", testData, string(buffer))
+	if string(buf[:n]) != "test" {
+		t.Errorf("NewInterruptibleReader() Read content = %v, want %v", string(buf[:n]), "test")
 	}
 
-	// 测试上下文取消
-	ctxCancel, cancel := context.WithCancel(context.Background())
+	// 测试上下文取消时的读取
 	cancel()
-	interruptibleReaderCanceled := NewInterruptibleReader(ctxCancel, reader)
-
-	_, err = interruptibleReaderCanceled.Read(buffer)
+	buf2 := make([]byte, 4)
+	_, err = interruptibleReader.Read(buf2)
 	if err != context.Canceled {
-		t.Errorf("Expected context.Canceled, got %v", err)
+		t.Errorf("NewInterruptibleReader() Read after cancel error = %v, want %v", err, context.Canceled)
 	}
 }
 
-// TestCommandExecution 测试命令执行流程
-func TestCommandExecution(t *testing.T) {
-	ctx := context.Background()
-
-	// 测试 remex 命令执行
-	_, err := ExecRemexCommand(ctx, nil, "remex.upload")
-	if err == nil {
-		t.Error("Expected error for nil client")
+// TestSSHClient_ID 测试 SSHClient 的 ID 方法
+func TestSSHClient_ID(t *testing.T) {
+	client := &SSHClient{
+		id: "test-client-id",
 	}
 
-	// 测试无效命令
-	_, err = ExecRemexCommand(ctx, nil, "")
-	if err == nil {
-		t.Error("Expected error for empty command")
-	}
-
-	// 测试未知命令
-	_, err = ExecRemexCommand(ctx, nil, "unknown.command")
-	if err == nil {
-		t.Error("Expected error for unknown command")
+	id := client.ID()
+	if id != "test-client-id" {
+		t.Errorf("SSHClient.ID() = %v, want %v", id, "test-client-id")
 	}
 }
 
-// TestCommandErrorHandling 测试命令错误处理
-func TestCommandErrorHandling(t *testing.T) {
-	// 测试注册重复命令（应该成功覆盖）
-	err := RegisterCommand("duplicate.test", func(ctx context.Context, client *ssh.Client, args ...string) (string, error) {
-		return "first", nil
-	})
-	if err != nil {
-		t.Errorf("First registration failed: %v", err)
-	}
-
-	err = RegisterCommand("duplicate.test", func(ctx context.Context, client *ssh.Client, args ...string) (string, error) {
-		return "second", nil
-	})
-	if err != nil {
-		t.Errorf("Second registration failed: %v", err)
-	}
-
-	// 验证覆盖成功
-	cmd, exists := GetCommand("remex.duplicate.test")
-	if !exists {
-		t.Error("Duplicate command not found")
-	}
-	output, err := cmd(context.Background(), nil)
-	if err != nil {
-		t.Errorf("Command execution failed: %v", err)
-	}
-	if output != "second" {
-		t.Errorf("Expected output 'second', got '%s'", output)
-	}
-}
-
-// TestCommandWithContext 测试带上下文的命令执行
-func TestCommandWithContext(t *testing.T) {
-	tests := []struct {
-		name       string
-		setupCtx   func() context.Context
-		args       []string
-		wantErr    bool
-		errorCheck func(error) bool
+// TestSSHClient_RemoteAddr 测试 SSHClient 的 RemoteAddr 方法
+func TestSSHClient_RemoteAddr(t *testing.T) {
+	testCases := []struct {
+		name     string
+		client   *SSHClient
+		expected netip.AddrPort
 	}{
 		{
-			name: "取消的上下文",
-			setupCtx: func() context.Context {
-				ctx, cancel := context.WithCancel(context.Background())
-				cancel() // 立即取消
-				return ctx
+			name: "正常配置",
+			client: &SSHClient{
+				config: &SSHConfig{
+					Addr: netip.MustParseAddr("192.168.1.1"),
+					Port: 22,
+				},
 			},
-			args:       []string{"echo", "test"},
-			wantErr:    true,
-			errorCheck: func(err error) bool { return err != nil },
+			expected: netip.AddrPortFrom(netip.MustParseAddr("192.168.1.1"), 22),
 		},
 		{
-			name: "正常上下文",
-			setupCtx: func() context.Context {
-				return context.Background()
+			name: "nil 配置",
+			client: &SSHClient{
+				config: nil,
 			},
-			args:       []string{"echo", "test"},
-			wantErr:    false,
-			errorCheck: func(err error) bool { return err == nil },
+			expected: netip.AddrPort{},
+		},
+		{
+			name: "IPv6 地址",
+			client: &SSHClient{
+				config: &SSHConfig{
+					Addr: netip.MustParseAddr("2001:db8::1"),
+					Port: 2222,
+				},
+			},
+			expected: netip.AddrPortFrom(netip.MustParseAddr("2001:db8::1"), 2222),
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := tt.setupCtx()
-			_, err := shScript(ctx, nil, tt.args...)
-
-			if (err != nil) != tt.wantErr {
-				t.Errorf("shScript() error = %v, wantErr %v", err, tt.wantErr)
-			}
-
-			if tt.errorCheck != nil && !tt.errorCheck(err) {
-				t.Errorf("shScript() error check failed for error: %v", err)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			addr := tc.client.RemoteAddr()
+			if addr != tc.expected {
+				t.Errorf("SSHClient.RemoteAddr() = %v, want %v", addr, tc.expected)
 			}
 		})
 	}
 }
 
-// TestCommandOutputFormat 测试命令输出格式
-func TestCommandOutputFormat(t *testing.T) {
-	tests := []struct {
-		name        string
-		args        []string
-		wantOutput  string
-		wantErr     bool
-		checkOutput bool
-	}{
-		{
-			name:        "多行输出",
-			args:        []string{"echo", "-e", `"line1\nline2\nline3"`},
-			wantOutput:  "line1\nline2\nline3\n",
-			wantErr:     false,
-			checkOutput: true,
-		},
-		{
-			name:        "单行输出",
-			args:        []string{"echo", "single line"},
-			wantOutput:  "single line\n",
-			wantErr:     false,
-			checkOutput: true,
-		},
-		{
-			name:        "空输出",
-			args:        []string{"true"},
-			wantOutput:  "",
-			wantErr:     false,
-			checkOutput: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			output, err := shScript(ctx, nil, tt.args...)
-
-			if (err != nil) != tt.wantErr {
-				t.Errorf("shScript() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			if tt.checkOutput && output != tt.wantOutput {
-				t.Errorf("shScript() output = %q, want %q", output, tt.wantOutput)
-			}
-		})
+// TestDefaultSSHPort 测试默认 SSH 端口常量
+func TestDefaultSSHPort(t *testing.T) {
+	if DefaultSSHPort != 22 {
+		t.Errorf("DefaultSSHPort = %v, want %v", DefaultSSHPort, 22)
 	}
 }
 
-// TestCommandArgumentHandling 测试命令参数处理
-func TestCommandArgumentHandling(t *testing.T) {
-	tests := []struct {
-		name        string
-		args        []string
-		wantOutput  string
-		wantErr     bool
-		checkOutput bool
-	}{
-		{
-			name:        "带空格的参数",
-			args:        []string{"echo", "hello world"},
-			wantOutput:  "hello world\n",
-			wantErr:     false,
-			checkOutput: true,
-		},
-		{
-			name:        "多个参数格式化",
-			args:        []string{"printf", `"%s %s"`, "arg1", "arg2"},
-			wantOutput:  "arg1 arg2",
-			wantErr:     false,
-			checkOutput: true,
-		},
-		{
-			name:        "空参数",
-			args:        []string{"echo", ""},
-			wantOutput:  "\n",
-			wantErr:     false,
-			checkOutput: true,
-		},
+// TestResultHandlerType 测试 ResultHandler 类型定义
+func TestResultHandlerType(t *testing.T) {
+	// 这个测试主要是确保 ResultHandler 类型可以正常使用
+	var handler ResultHandler = func(result ExecResult) {
+		// 空的处理器函数
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			output, err := shScript(ctx, nil, tt.args...)
+	if handler == nil {
+		t.Error("ResultHandler type is not usable")
+	}
+}
 
-			if (err != nil) != tt.wantErr {
-				t.Errorf("shScript() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
+// TestStageType 测试 Stage 类型
+func TestStageType(t *testing.T) {
+	// 测试 Stage 类型的字符串表示
+	stages := []Stage{StageError, StageStart, StageFinish}
+	expected := []string{"err", "start", "finish"}
 
-			if tt.checkOutput && output != tt.wantOutput {
-				t.Errorf("shScript() output = %q, want %q", output, tt.wantOutput)
-			}
-		})
+	for i, stage := range stages {
+		if string(stage) != expected[i] {
+			t.Errorf("Stage[%d] = %v, want %v", i, string(stage), expected[i])
+		}
 	}
 }

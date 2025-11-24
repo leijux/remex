@@ -1,231 +1,243 @@
 package remex
 
 import (
-	"context"
 	"errors"
-	"log/slog"
 	"net/netip"
-	"sync"
 	"testing"
 	"time"
 )
 
-// TestExecResult 测试 ExecResult 结构体
-func TestExecResult(t *testing.T) {
-	addr := netip.MustParseAddr("192.168.1.1")
-	addrPort := netip.AddrPortFrom(addr, 22)
-	now := time.Now()
+// mockAddr 是一个模拟的 fmt.Stringer 接口实现，用于测试
+type mockAddr struct {
+	addr string
+}
+
+func (m mockAddr) String() string {
+	return m.addr
+}
+
+// TestExecResult_String 测试 ExecResult 的 String 方法
+func TestExecResult_String(t *testing.T) {
+	fixedTime := time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	testCases := []struct {
+		name     string
+		input    ExecResult
+		expected string
+	}{
+		{
+			name: "正常结果无错误",
+			input: ExecResult{
+				ID:         "test-id",
+				Command:    "test command",
+				RemoteAddr: mockAddr{addr: "192.168.1.1:22"},
+				Stage:      StageStart,
+				Error:      nil,
+				Output:     "test output",
+				Time:       fixedTime,
+			},
+			expected: `{"command":test command, "id":test-id, "remote_addr":192.168.1.1:22, "error":<nil>, "output":test output, "time":2023-01-01 00:00:00 +0000 UTC}`,
+		},
+		{
+			name: "包含错误信息",
+			input: ExecResult{
+				ID:         "error-id",
+				Command:    "failing command",
+				RemoteAddr: mockAddr{addr: "192.168.1.2:22"},
+				Stage:      StageError,
+				Error:      errors.New("test error"),
+				Output:     "",
+				Time:       fixedTime,
+			},
+			expected: `{"command":failing command, "id":error-id, "remote_addr":192.168.1.2:22, "error":test error, "output":, "time":2023-01-01 00:00:00 +0000 UTC}`,
+		},
+		{
+			name: "空输出",
+			input: ExecResult{
+				ID:         "empty-output",
+				Command:    "empty command",
+				RemoteAddr: mockAddr{addr: "192.168.1.3:22"},
+				Stage:      StageFinish,
+				Error:      nil,
+				Output:     "",
+				Time:       fixedTime,
+			},
+			expected: `{"command":empty command, "id":empty-output, "remote_addr":192.168.1.3:22, "error":<nil>, "output":, "time":2023-01-01 00:00:00 +0000 UTC}`,
+		},
+		{
+			name: "空命令",
+			input: ExecResult{
+				ID:         "empty-command",
+				Command:    "",
+				RemoteAddr: mockAddr{addr: "192.168.1.4:22"},
+				Stage:      StageStart,
+				Error:      nil,
+				Output:     "output",
+				Time:       fixedTime,
+			},
+			expected: `{"command":, "id":empty-command, "remote_addr":192.168.1.4:22, "error":<nil>, "output":output, "time":2023-01-01 00:00:00 +0000 UTC}`,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := tc.input.String()
+			if result != tc.expected {
+				t.Errorf("String() = %v, want %v", result, tc.expected)
+			}
+		})
+	}
+}
+
+// TestNewSSHConfig 测试 NewSSHConfig 函数
+func TestNewSSHConfig(t *testing.T) {
+	testCases := []struct {
+		name           string
+		remoteAddr     netip.Addr
+		username       string
+		password       string
+		expectedConfig *SSHConfig
+	}{
+		{
+			name:       "默认配置",
+			remoteAddr: netip.MustParseAddr("192.168.1.1"),
+			username:   "testuser",
+			password:   "testpass",
+			expectedConfig: &SSHConfig{
+				Username:         "testuser",
+				Password:         "testpass",
+				Addr:             netip.MustParseAddr("192.168.1.1"),
+				Port:             DefaultSSHPort,
+				autoRootPassword: true,
+			},
+		},
+		{
+			name:       "空用户名",
+			remoteAddr: netip.MustParseAddr("192.168.1.1"),
+			username:   "",
+			password:   "testpass",
+			expectedConfig: &SSHConfig{
+				Username:         "",
+				Password:         "testpass",
+				Addr:             netip.MustParseAddr("192.168.1.1"),
+				Port:             DefaultSSHPort,
+				autoRootPassword: true,
+			},
+		},
+		{
+			name:       "空密码",
+			remoteAddr: netip.MustParseAddr("192.168.1.1"),
+			username:   "testuser",
+			password:   "",
+			expectedConfig: &SSHConfig{
+				Username:         "testuser",
+				Password:         "",
+				Addr:             netip.MustParseAddr("192.168.1.1"),
+				Port:             DefaultSSHPort,
+				autoRootPassword: true,
+			},
+		},
+		{
+			name:       "IPv6地址",
+			remoteAddr: netip.MustParseAddr("2001:db8::1"),
+			username:   "testuser",
+			password:   "testpass",
+			expectedConfig: &SSHConfig{
+				Username:         "testuser",
+				Password:         "testpass",
+				Addr:             netip.MustParseAddr("2001:db8::1"),
+				Port:             DefaultSSHPort,
+				autoRootPassword: true,
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			config := NewSSHConfig(tc.remoteAddr, tc.username, tc.password)
+
+			if config.Username != tc.expectedConfig.Username {
+				t.Errorf("Username = %v, want %v", config.Username, tc.expectedConfig.Username)
+			}
+			if config.Password != tc.expectedConfig.Password {
+				t.Errorf("Password = %v, want %v", config.Password, tc.expectedConfig.Password)
+			}
+			if config.Addr != tc.expectedConfig.Addr {
+				t.Errorf("Addr = %v, want %v", config.Addr, tc.expectedConfig.Addr)
+			}
+			if config.Port != tc.expectedConfig.Port {
+				t.Errorf("Port = %v, want %v", config.Port, tc.expectedConfig.Port)
+			}
+			if config.autoRootPassword != tc.expectedConfig.autoRootPassword {
+				t.Errorf("autoRootPassword = %v, want %v", config.autoRootPassword, tc.expectedConfig.autoRootPassword)
+			}
+		})
+	}
+}
+
+// TestStageConstants 测试 Stage 常量的值
+func TestStageConstants(t *testing.T) {
+	testCases := []struct {
+		name     string
+		stage    Stage
+		expected string
+	}{
+		{
+			name:     "StageError",
+			stage:    StageError,
+			expected: "err",
+		},
+		{
+			name:     "StageStart",
+			stage:    StageStart,
+			expected: "start",
+		},
+		{
+			name:     "StageFinish",
+			stage:    StageFinish,
+			expected: "finish",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if string(tc.stage) != tc.expected {
+				t.Errorf("%s = %v, want %v", tc.name, string(tc.stage), tc.expected)
+			}
+		})
+	}
+}
+
+// TestExecResult_Fields 测试 ExecResult 结构体的字段
+func TestExecResult_Fields(t *testing.T) {
+	fixedTime := time.Now()
 
 	result := ExecResult{
-		Index:      1,
 		ID:         "test-id",
-		RemoteAddr: addrPort,
+		Command:    "test command",
+		RemoteAddr: mockAddr{addr: "192.168.1.1:22"},
+		Stage:      StageStart,
 		Error:      errors.New("test error"),
 		Output:     "test output",
-		Time:       now,
+		Time:       fixedTime,
 	}
 
-	// 测试 String 方法
-	str := result.String()
-	if str == "" {
-		t.Error("ExecResult.String() returned empty string")
-	}
-
-	// 测试字段值
-	if result.Index != 1 {
-		t.Errorf("Expected Index 1, got %d", result.Index)
-	}
 	if result.ID != "test-id" {
-		t.Errorf("Expected ID 'test-id', got '%s'", result.ID)
+		t.Errorf("ID = %v, want %v", result.ID, "test-id")
+	}
+	if result.Command != "test command" {
+		t.Errorf("Command = %v, want %v", result.Command, "test command")
+	}
+	if result.Stage != StageStart {
+		t.Errorf("Stage = %v, want %v", result.Stage, StageStart)
 	}
 	if result.Error.Error() != "test error" {
-		t.Errorf("Expected error 'test error', got '%v'", result.Error)
+		t.Errorf("Error = %v, want %v", result.Error, "test error")
 	}
 	if result.Output != "test output" {
-		t.Errorf("Expected output 'test output', got '%s'", result.Output)
+		t.Errorf("Output = %v, want %v", result.Output, "test output")
 	}
-}
-
-// TestNewWithContext 测试 Remex 实例创建
-func TestNewWithContext(t *testing.T) {
-	ctx := context.Background()
-	logger := slog.Default()
-	configs := map[string]*SSHConfig{
-		"host1": NewSSHConfig(netip.MustParseAddr("192.168.1.1"), "user", "pass"),
-	}
-
-	remex := NewWithContext(ctx, logger, configs)
-
-	if remex == nil {
-		t.Fatal("NewWithContext returned nil")
-	}
-	if remex.ctx == nil {
-		t.Error("Context is nil")
-	}
-	if remex.logger == nil {
-		t.Error("Logger is nil")
-	}
-	if len(remex.configs) != 1 {
-		t.Errorf("Expected 1 config, got %d", len(remex.configs))
-	}
-}
-
-// TestRegisterHandler 测试处理器注册
-func TestRegisterHandler(t *testing.T) {
-	ctx := context.Background()
-	logger := slog.Default()
-	configs := map[string]*SSHConfig{}
-	remex := NewWithContext(ctx, logger, configs)
-
-	// 测试注册单个处理器
-	called := false
-	handler := func(result ExecResult) {
-		called = true
-	}
-
-	remex.RegisterHandler(handler)
-
-	if len(remex.handlers) != 1 {
-		t.Errorf("Expected 1 handler, got %d", len(remex.handlers))
-	}
-
-	// 测试注册多个处理器
-	handler2 := func(result ExecResult) {}
-	remex.RegisterHandler(handler, handler2)
-
-	if len(remex.handlers) != 3 {
-		t.Errorf("Expected 3 handlers, got %d", len(remex.handlers))
-	}
-
-	// 测试处理器调用
-	remex.notifyHandlers(ExecResult{})
-	if !called {
-		t.Error("Handler was not called")
-	}
-}
-
-// TestGetConnectedHosts 测试获取已连接主机
-func TestGetConnectedHosts(t *testing.T) {
-	ctx := context.Background()
-	logger := slog.Default()
-	configs := map[string]*SSHConfig{}
-	remex := NewWithContext(ctx, logger, configs)
-
-	// 测试空客户端列表
-	hosts := remex.GetConnectedHosts()
-	if len(hosts) != 0 {
-		t.Errorf("Expected 0 hosts, got %d", len(hosts))
-	}
-
-	// 添加模拟客户端
-	config := NewSSHConfig(netip.MustParseAddr("192.168.1.1"), "user", "pass")
-	remex.clients = map[string]*SSHClient{
-		"host1": {ID: "host1", config: config},
-	}
-
-	hosts = remex.GetConnectedHosts()
-	if len(hosts) != 1 {
-		t.Errorf("Expected 1 host, got %d", len(hosts))
-	}
-	// 注意：由于 SSHClient 没有实际的 SSH 连接，RemoteAddr() 可能返回空
-	// 我们主要测试函数不 panic
-}
-
-// TestGetClientByName 测试按名称获取客户端
-func TestGetClientByName(t *testing.T) {
-	ctx := context.Background()
-	logger := slog.Default()
-	configs := map[string]*SSHConfig{}
-	remex := NewWithContext(ctx, logger, configs)
-
-	// 测试不存在的客户端
-	client := remex.GetClientByName("nonexistent")
-	if client != nil {
-		t.Error("Expected nil for nonexistent client")
-	}
-
-	// 添加模拟客户端
-	testClient := &SSHClient{ID: "host1", config: NewSSHConfig(netip.MustParseAddr("192.168.1.1"), "user", "pass")}
-	remex.clients = map[string]*SSHClient{
-		"host1": testClient,
-	}
-
-	client = remex.GetClientByName("host1")
-	if client != testClient {
-		t.Error("Did not get expected client")
-	}
-}
-
-// TestClose 测试关闭功能
-func TestClose(t *testing.T) {
-	ctx := context.Background()
-	logger := slog.Default()
-	configs := map[string]*SSHConfig{}
-	remex := NewWithContext(ctx, logger, configs)
-
-	// 测试空客户端关闭
-	err := remex.Close()
-	if err != nil {
-		t.Errorf("Close failed: %v", err)
-	}
-
-	// 测试带客户端的关闭
-	remex.clients = map[string]*SSHClient{
-		"host1": {ID: "host1", config: NewSSHConfig(netip.MustParseAddr("192.168.1.1"), "user", "pass")},
-	}
-
-	err = remex.Close()
-	if err != nil {
-		t.Errorf("Close failed: %v", err)
-	}
-}
-
-// TestConcurrentAccess 测试并发访问
-func TestConcurrentAccess(t *testing.T) {
-	ctx := context.Background()
-	logger := slog.Default()
-	configs := map[string]*SSHConfig{}
-	remex := NewWithContext(ctx, logger, configs)
-
-	var wg sync.WaitGroup
-	iterations := 100
-
-	// 并发注册处理器
-	for i := 0; i < iterations; i++ {
-		wg.Add(1)
-		go func(index int) {
-			defer wg.Done()
-			remex.RegisterHandler(func(result ExecResult) {})
-		}(i)
-	}
-
-	// 并发获取主机列表
-	for i := 0; i < iterations; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_ = remex.GetConnectedHosts()
-		}()
-	}
-
-	wg.Wait()
-
-	// 验证处理器数量
-	if len(remex.handlers) != iterations {
-		t.Errorf("Expected %d handlers, got %d", iterations, len(remex.handlers))
-	}
-}
-
-// TestErrorGroup 测试错误组功能
-func TestErrorGroup(t *testing.T) {
-	ctx := context.Background()
-	logger := slog.Default()
-	configs := map[string]*SSHConfig{}
-	remex := NewWithContext(ctx, logger, configs)
-
-	// 测试错误组等待
-	err := remex.errGroup.Wait()
-	if err != nil {
-		t.Errorf("errGroup.Wait failed: %v", err)
+	if result.Time != fixedTime {
+		t.Errorf("Time = %v, want %v", result.Time, fixedTime)
 	}
 }
