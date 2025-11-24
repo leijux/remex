@@ -254,34 +254,6 @@ func createRemoteDirectory(ctx context.Context, client *ssh.Client, args ...stri
 	return fmt.Sprintf("Directory created successfully: %s", directoryPath), nil
 }
 
-// fileExists checks if a file exists on the remote host
-func fileExists(client *ssh.Client, args ...string) (string, error) {
-	if len(args) != 1 {
-		return "", errors.New("fileExists requires exactly one argument: filePath")
-	}
-
-	filePath := strings.TrimSpace(args[0])
-	if filePath == "" {
-		return "", errors.New("file path cannot be empty")
-	}
-
-	sftpClient, err := sftp.NewClient(client)
-	if err != nil {
-		return "", fmt.Errorf("failed to create SFTP client: %w", err)
-	}
-	defer sftpClient.Close()
-
-	_, err = sftpClient.Stat(filePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "false", nil
-		}
-		return "", fmt.Errorf("failed to check file existence: %w", err)
-	}
-
-	return "true", nil
-}
-
 type interruptibleReader func(p []byte) (n int, err error)
 
 func (r interruptibleReader) Read(p []byte) (n int, err error) {

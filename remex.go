@@ -188,25 +188,25 @@ func (r *Remex) execCommands(client RemoteClient, commands []string) error {
 		logger     = r.logger.With("id", client.ID(), "remote", remoteAddr)
 	)
 
-	for i := 0; i < len(commands); i++ {
+	for _, command := range commands {
 		select {
 		case <-r.ctx.Done():
 			logger.Debug("execution cancelled")
 			return r.ctx.Err()
 		default:
-			logger.Info("executing command", "command", commands[i])
+			logger.Info("executing command", "command", command)
 
-			r.notifyHandlers(ExecResult{Command: commands[i], ID: client.ID(), Stage: StageStart, RemoteAddr: remoteAddr})
+			r.notifyHandlers(ExecResult{Command: command, ID: client.ID(), Stage: StageStart, RemoteAddr: remoteAddr})
 
-			output, err := client.ExecuteCommand(r.ctx, commands[i])
+			output, err := client.ExecuteCommand(r.ctx, command)
 
-			r.notifyHandlers(ExecResult{Command: commands[i], ID: client.ID(), Stage: StageFinish, RemoteAddr: remoteAddr,
+			r.notifyHandlers(ExecResult{Command: command, ID: client.ID(), Stage: StageFinish, RemoteAddr: remoteAddr,
 				Output: output, Error: err})
 
 			if err != nil {
-				return fmt.Errorf("failed to execute command %q: %w", commands[i], err)
+				return fmt.Errorf("failed to execute command %q: %w", command, err)
 			}
-			logger.Info("command done", "command", commands[i], "output", output)
+			logger.Info("command done", "command", command, "output", output)
 		}
 	}
 
