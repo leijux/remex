@@ -27,12 +27,6 @@ git clone https://github.com/leijux/remex.git
 cd remex
 ```
 
-### 构建
-
-```bash
-go build
-```
-
 ## 快速开始
 
 ### 基本用法
@@ -50,18 +44,16 @@ import (
 
 func main() {
     // 创建配置
-    configs := []*remex.Config{
-        remex.NewRemoteConfig(
+    configs := map[string]*remex.SSHConfig{
+        "server1": remex.NewSSHConfig(
             netip.MustParseAddr("192.168.1.100"),
             "username",
             "password",
-            []string{"ls -la", "pwd", "whoami"},
         ),
-        remex.NewRemoteConfig(
+        "server2": remex.NewSSHConfig(
             netip.MustParseAddr("192.168.1.101"),
             "username",
             "password",
-            []string{"ls -la", "pwd", "whoami"},
         ),
     }
 
@@ -69,14 +61,16 @@ func main() {
     logger := slog.Default()
 
     // 创建 Remex 实例
-    remex := remex.NewWithConfig(configs, logger)
+    remex := remex.NewWithContext(context.Background(), logger, configs)
     defer remex.Close()
 
     // 注册结果处理器
     remex.RegisterHandler(func(result remex.ExecResult) {
         logger.Info("执行结果",
-            "索引", result.Index,
+            "ID", result.ID,
             "远程地址", result.RemoteAddr,
+            "命令", result.Command,
+            "阶段", result.Stage,
             "输出", result.Output,
             "错误", result.Error,
             "时间", result.Time,
@@ -84,7 +78,12 @@ func main() {
     })
 
     // 连接并执行命令
-    if err := remex.Execute(); err != nil {
+    commands := []string{"ls -la", "pwd", "whoami"}
+    if err := remex.Connect(); err != nil {
+        logger.Error("连接失败", "错误", err)
+        return
+    }
+    if err := remex.Execute(commands); err != nil {
         logger.Error("执行失败", "错误", err)
     }
 }
@@ -93,10 +92,48 @@ func main() {
 ### 使用上下文
 
 ```go
-ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-defer cancel()
+package main
 
-remex := remex.NewWithContext(ctx, configs, logger)
+import (
+    "context"
+    "log/slog"
+    "net/netip"
+    "time"
+
+    "github.com/leijux/remex"
+)
+
+func main() {
+    // 创建配置
+    configs := map[string]*remex.SSHConfig{
+        "server1": remex.NewSSHConfig(
+            netip.MustParseAddr("192.168.1.100"),
+            "username",
+            "password",
+        ),
+    }
+
+    // 创建日志器
+    logger := slog.Default()
+
+    // 创建带超时的上下文
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer cancel()
+
+    // 创建 Remex 实例
+    remex := remex.NewWithContext(ctx, logger, configs)
+    defer remex.Close()
+
+    // 连接并执行命令
+    commands := []string{"ls -la", "pwd"}
+    if err := remex.Connect(); err != nil {
+        logger.Error("连接失败", "错误", err)
+        return
+    }
+    if err := remex.Execute(commands); err != nil {
+        logger.Error("执行失败", "错误", err)
+    }
+}
 ```
 
 ## 内部命令
@@ -120,11 +157,11 @@ remex.download /remote/path/file.txt /local/path/file.txt
 remex.mkdir /remote/path/new_directory
 ```
 
-### 本地命令执行
+### Shell 脚本执行
 
 ```bash
-# 在本地执行命令
-remex.exec ls -la
+# 在本地执行 shell 脚本
+remex.sh echo "Hello World"
 ```
 
 ## 扩展自定义命令
@@ -150,38 +187,108 @@ remex.RegisterCommand("mycommand", myCustomCommand)
 ### 批量文件部署
 
 ```go
-configs := []*remex.Config{
-    remex.NewRemoteConfig(
-        netip.MustParseAddr("server1.example.com"),
-        "deploy",
-        "password",
-        []string{
-            "remex.mkdir /opt/myapp",
-            "remex.upload ./build/myapp /opt/myapp/myapp",
-            "chmod +x /opt/myapp/myapp",
-            "systemctl restart myapp",
-        },
-    ),
+package main
+
+import (
+    "context"
+    "log/slog"
+    "net/netip"
+
+    "github.com/leijux/remex"
+)
+
+func main() {
+    // 创建配置
+    configs := map[string]*remex.SSHConfig{
+        "server1": remex.NewSSHConfig(
+            netip.MustParseAddr("server1.example.com"),
+            "deploy",
+            "password",
+        ),
+    }
+
+    // 创建日志器
+    logger := slog.Default()
+
+    // 创建 Remex 实例
+    remex := remex.NewWithContext(context.Background(), logger, configs)
+    defer remex.Close()
+
+    // 部署命令
+    commands := []string{
+        "remex.mkdir /opt/myapp",
+        "remex.upload ./build/myapp /opt/myapp/myapp",
+        "chmod +x /opt/myapp/myapp",
+        "systemctl restart myapp",
+    }
+
+    // 连接并执行部署
+    if err := remex.Connect(); err != nil {
+        logger.Error("连接失败", "错误", err)
+        return
+    }
+    if err := remex.Execute(commands); err != nil {
+        logger.Error("部署失败", "错误", err)
+    }
 }
 ```
 
 ### 系统监控
 
 ```go
-commands := []string{
-    "uptime",
-    "free -h",
-    "df -h",
-    "ps aux --sort=-%cpu | head -10",
-}
+package main
 
-configs := []*remex.Config{
-    remex.NewRemoteConfig(
-        netip.MustParseAddr("monitor1.example.com"),
-        "monitor",
-        "password",
-        commands,       
-    ),
+import (
+    "context"
+    "log/slog"
+    "net/netip"
+
+    "github.com/leijux/remex"
+)
+
+func main() {
+    // 监控命令
+    commands := []string{
+        "uptime",
+        "free -h",
+        "df -h",
+        "ps aux --sort=-%cpu | head -10",
+    }
+
+    // 创建配置
+    configs := map[string]*remex.SSHConfig{
+        "monitor1": remex.NewSSHConfig(
+            netip.MustParseAddr("monitor1.example.com"),
+            "monitor",
+            "password",
+        ),
+    }
+
+    // 创建日志器
+    logger := slog.Default()
+
+    // 创建 Remex 实例
+    remex := remex.NewWithContext(context.Background(), logger, configs)
+    defer remex.Close()
+
+    // 注册结果处理器
+    remex.RegisterHandler(func(result remex.ExecResult) {
+        logger.Info("监控结果",
+            "主机", result.ID,
+            "命令", result.Command,
+            "输出", result.Output,
+            "错误", result.Error,
+        )
+    })
+
+    // 连接并执行监控
+    if err := remex.Connect(); err != nil {
+        logger.Error("连接失败", "错误", err)
+        return
+    }
+    if err := remex.Execute(commands); err != nil {
+        logger.Error("监控失败", "错误", err)
+    }
 }
 ```
 
