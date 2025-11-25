@@ -29,7 +29,7 @@ var registry = &remexRegistry{
 	commands: map[string]remexCommand{
 		"remex.upload":   uploadFile,
 		"remex.download": downloadFile,
-		"remex.sh":       shScript,
+		"remex.exec":     localCommand,
 		"remex.mkdir":    createRemoteDirectory,
 	},
 }
@@ -113,7 +113,7 @@ func downloadFile(ctx context.Context, client *ssh.Client, args ...string) (stri
 	}
 	defer localFile.Close()
 
-	bytesCopied, err := io.Copy(localFile, NewInterruptibleReader(ctx, remoteFile))
+	bytesCopied, err := io.Copy(localFile, newInterruptibleReader(ctx, remoteFile))
 	if err != nil {
 		// Clean up partially downloaded file
 		os.Remove(localFilePath)
@@ -155,7 +155,7 @@ func uploadFile(ctx context.Context, client *ssh.Client, args ...string) (string
 	}
 	defer localFile.Close()
 
-	bytesCopied, err := UploadMemoryFile(ctx, client, localFile, remoteFilePath)
+	bytesCopied, err := uploadMemoryFile(ctx, client, localFile, remoteFilePath)
 	if err != nil {
 		return "", err
 	}
@@ -167,7 +167,7 @@ func uploadFile(ctx context.Context, client *ssh.Client, args ...string) (string
 // UploadMemoryFileCommand uploads a file from memory to the remote server.
 func UploadMemoryFileCommand(reader io.Reader, remoteFilePath string) remexCommand {
 	return func(ctx context.Context, client *ssh.Client, _ ...string) (string, error) {
-		bytesCopied, err := UploadMemoryFile(ctx, client, reader, remoteFilePath)
+		bytesCopied, err := uploadMemoryFile(ctx, client, reader, remoteFilePath)
 		if err != nil {
 			return "", err
 		}
@@ -178,7 +178,14 @@ func UploadMemoryFileCommand(reader io.Reader, remoteFilePath string) remexComma
 }
 
 // UploadMemoryFile uploads a file from memory to the remote server.
-func UploadMemoryFile(ctx context.Context, client *ssh.Client, reader io.Reader, remoteFilePath string) (int64, error) {
+func UploadMemoryFile(ctx context.Context, r RemoteClient, reader io.Reader, remoteFilePath string) (int64, error) {
+	if client, ok := r.(*SSHClient); ok {
+		return uploadMemoryFile(ctx, client.Client, reader, remoteFilePath)
+	}
+	return 0, errors.New("unsupported remote client type")
+}
+
+func uploadMemoryFile(ctx context.Context, client *ssh.Client, reader io.Reader, remoteFilePath string) (int64, error) {
 	if client == nil {
 		return 0, errors.New("ssh client is nil")
 	}
@@ -203,7 +210,7 @@ func UploadMemoryFile(ctx context.Context, client *ssh.Client, reader io.Reader,
 	}
 	defer remoteFile.Close()
 
-	bytesCopied, err := io.Copy(remoteFile, NewInterruptibleReader(ctx, reader))
+	bytesCopied, err := io.Copy(remoteFile, newInterruptibleReader(ctx, reader))
 	if err != nil {
 		// Clean up partially uploaded file
 		sftpClient.Remove(remoteFilePath)
@@ -213,8 +220,8 @@ func UploadMemoryFile(ctx context.Context, client *ssh.Client, reader io.Reader,
 	return bytesCopied, nil
 }
 
-// shScript runs a shell script on the remote host
-func shScript(ctx context.Context, _ *ssh.Client, args ...string) (string, error) {
+// localCommand runs a local command on the local host
+func localCommand(ctx context.Context, _ *ssh.Client, args ...string) (string, error) {
 	if len(args) == 0 {
 		return "", errors.New("command execution requires at least one argument")
 	}
@@ -261,7 +268,7 @@ func (r interruptibleReader) Read(p []byte) (n int, err error) {
 	return r(p)
 }
 
-func NewInterruptibleReader(ctx context.Context, r io.Reader) io.Reader {
+func newInterruptibleReader(ctx context.Context, r io.Reader) io.Reader {
 	return interruptibleReader(func(p []byte) (n int, err error) {
 		select {
 		case <-ctx.Done():

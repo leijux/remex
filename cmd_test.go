@@ -151,7 +151,7 @@ func TestListCommands(t *testing.T) {
 	expectedCommands := []string{
 		"remex.upload",
 		"remex.download",
-		"remex.sh",
+		"remex.exec",
 		"remex.mkdir",
 	}
 
@@ -176,7 +176,7 @@ func TestNewInterruptibleReader(t *testing.T) {
 
 	// 创建一个简单的字符串读取器
 	reader := strings.NewReader("test data")
-	interruptibleReader := NewInterruptibleReader(ctx, reader)
+	interruptibleReader := newInterruptibleReader(ctx, reader)
 
 	// 测试正常读取
 	buf := make([]byte, 4)
