@@ -71,7 +71,7 @@ type SSHClient struct {
 }
 
 // NewSSHClient creates a new SSHClient instance
-func NewSSHClient(ID string, config *SSHConfig) (*SSHClient, error) {
+func NewSSHClient(ID string, config *SSHConfig) (RemoteClient, error) {
 	client, err := config.Connect()
 	if err != nil {
 		return nil, err
