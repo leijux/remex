@@ -150,7 +150,7 @@ func ExecRemoteCommand(ctx context.Context, env map[string]string, client *ssh.C
 		}
 		defer stdin.Close()
 
-		fmt.Fprintln(stdin, password)
+		fmt.Fprintf(stdin, "%s\n", password)
 	}
 
 	select {
