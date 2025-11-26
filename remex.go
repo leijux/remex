@@ -52,7 +52,6 @@ type Remex struct {
 
 	logger *slog.Logger
 
-	results  chan ExecResult
 	handlers []ResultHandler
 
 	ctx        context.Context
@@ -76,7 +75,6 @@ func NewWithContext(ctx context.Context, logger *slog.Logger, configs map[string
 		clients:    make(map[string]RemoteClient),
 		configs:    configs,
 		logger:     logger,
-		results:    make(chan ExecResult),
 		ctx:        ctx,
 		cancelFunc: cancel,
 		errGroup:   g,
@@ -107,11 +105,9 @@ func (r *Remex) notifyHandlers(result ExecResult) {
 	defer r.mutex.RUnlock()
 
 	go func() {
-		for res := range r.results {
-			for _, h := range r.handlers {
-				r.logger.Debug("notifying handler", "ID", result.ID, "remote", result.RemoteAddr, "command", result.Command)
-				h(res)
-			}
+		for _, h := range r.handlers {
+			r.logger.Debug("notifying handler", "ID", result.ID, "remote", result.RemoteAddr, "command", result.Command)
+			h(result)
 		}
 	}()
 }
