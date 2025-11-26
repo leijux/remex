@@ -19,9 +19,13 @@ const remexID = "REMEX_ID"
 type Stage string
 
 const (
+	// 连接失败
+	Disconnected Stage = "disconnected"
+	// 连接成功
 	Connected Stage = "connected"
-	Start     Stage = "start"
-	Finish    Stage = "finish"
+
+	Start  Stage = "start"
+	Finish Stage = "finish"
 )
 
 // ExecResult represents the result of command execution
@@ -125,20 +129,24 @@ func (r *Remex) Connect() error {
 			if err != nil {
 				r.logger.Error("failed to establish SSH connection",
 					"remote", config.Addr, "error", err)
+
 				connectionErrors = append(connectionErrors, fmt.Errorf("host %s (%s): %w", id, config.Addr, err))
-				r.notifyHandlers(ExecResult{ID: client.ID(), Stage: Connected, RemoteAddr: config.Addr})
+				r.notifyHandlers(ExecResult{ID: client.ID(), Stage: Disconnected, RemoteAddr: config.Addr, Error: err})
 
 				continue
 			}
 
 			r.mutex.Lock()
+
 			if _, ok := r.clients[id]; ok {
 				r.clients[id].Close()
 			}
 
 			r.clients[id] = client
+
 			r.mutex.Unlock()
 
+			r.notifyHandlers(ExecResult{ID: client.ID(), Stage: Connected, RemoteAddr: config.Addr})
 			r.logger.Info("SSH connection established", "remote", config.Addr)
 		}
 	}
