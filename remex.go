@@ -214,8 +214,11 @@ func (r *Remex) execCommands(client RemoteClient, commands []string) error {
 				Output: output, Error: err})
 
 			if err != nil {
+				logger.Error("failed to execute command", "command", command, "error", err, "output", output)
+
 				return fmt.Errorf("failed to execute command %q: %w", command, err)
 			}
+
 			logger.Info("command done", "command", command, "output", output)
 		}
 	}
