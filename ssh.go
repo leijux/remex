@@ -162,7 +162,7 @@ func ExecRemoteCommand(ctx context.Context, env map[string]string, client *ssh.C
 		output := <-outputCh // 命令结束
 
 		if err != nil {
-			return string(output), fmt.Errorf("command execution failed: %w", err)
+			return string(output), err
 		}
 		return string(output), nil
 	}
