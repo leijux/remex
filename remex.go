@@ -58,8 +58,7 @@ type Remex struct {
 
 	handlers []ResultHandler
 
-	ctx        context.Context
-	cancelFunc context.CancelFunc
+	ctx context.Context
 
 	errGroup *errgroup.Group
 	mutex    sync.RWMutex
@@ -73,15 +72,13 @@ func NewWithContext(ctx context.Context, logger *slog.Logger, configs map[string
 		logger = slog.Default()
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
-	g, ctx := errgroup.WithContext(ctx)
+	g, _ := errgroup.WithContext(ctx)
 	return &Remex{
-		clients:    make(map[string]RemoteClient),
-		configs:    configs,
-		logger:     logger,
-		ctx:        ctx,
-		cancelFunc: cancel,
-		errGroup:   g,
+		clients:  make(map[string]RemoteClient),
+		configs:  configs,
+		logger:   logger,
+		ctx:      ctx,
+		errGroup: g,
 
 		newSSHClient: NewSSHClient,
 	}
@@ -108,12 +105,10 @@ func (r *Remex) notifyHandlers(result ExecResult) {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
 
-	go func() {
-		for _, h := range r.handlers {
-			r.logger.Debug("notifying handler", "ID", result.ID, "remote", result.RemoteAddr, "command", result.Command)
-			h(result)
-		}
-	}()
+	for _, h := range r.handlers {
+		r.logger.Debug("notifying handler", "ID", result.ID, "remote", result.RemoteAddr, "command", result.Command)
+		h(result)
+	}
 }
 
 // Connect establishes SSH connections to all remote hosts
@@ -131,22 +126,22 @@ func (r *Remex) Connect() error {
 					"remote", config.Addr, "error", err)
 
 				connectionErrors = append(connectionErrors, fmt.Errorf("host %s (%s): %w", id, config.Addr, err))
-				r.notifyHandlers(ExecResult{ID: client.ID(), Stage: Disconnected, RemoteAddr: config.Addr, Error: err})
+				r.notifyHandlers(ExecResult{ID: id, Stage: Disconnected, RemoteAddr: config.Addr, Error: err})
 
 				continue
 			}
 
 			r.mutex.Lock()
 
-			if _, ok := r.clients[id]; ok {
-				r.clients[id].Close()
+			if client, ok := r.clients[id]; ok {
+				client.Close()
 			}
 
 			r.clients[id] = client
 
 			r.mutex.Unlock()
 
-			r.notifyHandlers(ExecResult{ID: client.ID(), Stage: Connected, RemoteAddr: config.Addr})
+			r.notifyHandlers(ExecResult{ID: id, Stage: Connected, RemoteAddr: config.Addr})
 			r.logger.Info("SSH connection established", "remote", config.Addr)
 		}
 	}
@@ -205,7 +200,6 @@ func (r *Remex) execCommands(client RemoteClient, commands []string) error {
 	for _, command := range commands {
 		select {
 		case <-r.ctx.Done():
-			logger.Debug("execution cancelled")
 			return r.ctx.Err()
 		default:
 			logger.Info("executing command", "command", command)
@@ -267,7 +261,6 @@ func (r *Remex) GetClientByID(id string) (RemoteClient, bool) {
 
 // Close closes all SSH connections and cleans up resources
 func (r *Remex) Close() error {
-	r.cancelFunc()
 	if err := r.errGroup.Wait(); err != nil {
 		return err
 	}
