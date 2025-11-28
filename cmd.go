@@ -165,9 +165,9 @@ func uploadFile(ctx context.Context, client *ssh.Client, args ...string) (string
 }
 
 // UploadMemoryFileCommand uploads a file from memory to the remote server.
-func UploadMemoryFileCommand(reader io.Reader, remoteFilePath string) remexCommand {
+func UploadMemoryFileCommand(data []byte, remoteFilePath string) remexCommand {
 	return func(ctx context.Context, client *ssh.Client, _ ...string) (string, error) {
-		bytesCopied, err := uploadMemoryFile(ctx, client, reader, remoteFilePath)
+		bytesCopied, err := uploadMemoryFile(ctx, client, bytes.NewReader(data), remoteFilePath)
 		if err != nil {
 			return "", err
 		}
