@@ -16,16 +16,16 @@ import (
 
 const remexID = "REMEX_ID"
 
-type Stage string
+type Stage uint8
 
 const (
 	// 连接失败
-	Disconnected Stage = "disconnected"
+	StageDisconnected Stage = iota
 	// 连接成功
-	Connected Stage = "connected"
+	StageConnected
 
-	Start  Stage = "start"
-	Finish Stage = "finish"
+	StageStart
+	StageFinish
 )
 
 // ExecResult represents the result of command execution
@@ -126,7 +126,7 @@ func (r *Remex) Connect() error {
 					"remote", config.Addr, "error", err)
 
 				connectionErrors = append(connectionErrors, fmt.Errorf("host %s (%s): %w", id, config.Addr, err))
-				r.notifyHandlers(ExecResult{ID: id, Stage: Disconnected, RemoteAddr: config.Addr, Error: err})
+				r.notifyHandlers(ExecResult{ID: id, Stage: StageDisconnected, RemoteAddr: config.Addr, Error: err})
 
 				continue
 			}
@@ -141,7 +141,7 @@ func (r *Remex) Connect() error {
 
 			r.mutex.Unlock()
 
-			r.notifyHandlers(ExecResult{ID: id, Stage: Connected, RemoteAddr: config.Addr})
+			r.notifyHandlers(ExecResult{ID: id, Stage: StageConnected, RemoteAddr: config.Addr})
 			r.logger.Info("SSH connection established", "remote", config.Addr)
 		}
 	}
@@ -204,11 +204,11 @@ func (r *Remex) execCommands(client RemoteClient, commands []string) error {
 		default:
 			logger.Info("executing command", "command", command)
 
-			r.notifyHandlers(ExecResult{Command: command, ID: client.ID(), Stage: Start, RemoteAddr: remoteAddr})
+			r.notifyHandlers(ExecResult{Command: command, ID: client.ID(), Stage: StageStart, RemoteAddr: remoteAddr})
 
 			output, err := client.ExecuteCommand(r.ctx, command)
 
-			r.notifyHandlers(ExecResult{Command: command, ID: client.ID(), Stage: Finish, RemoteAddr: remoteAddr,
+			r.notifyHandlers(ExecResult{Command: command, ID: client.ID(), Stage: StageFinish, RemoteAddr: remoteAddr,
 				Output: output, Error: err})
 
 			if err != nil {
